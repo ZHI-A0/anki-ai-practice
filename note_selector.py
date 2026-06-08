@@ -4,6 +4,7 @@ from typing import Any
 
 from .config import get_config
 from .models import SourceNote
+from .source_compactor import clean_field_text
 
 
 def _active_browser(mw: Any) -> Any | None:
@@ -38,6 +39,25 @@ def _selected_note_ids(browser: Any) -> list[int]:
     return []
 
 
+def _front_text_for_note(note: Any) -> str:
+    """Return the text Anki would show on the first card's front side when possible."""
+    try:
+        cards = note.cards()
+        if cards:
+            question = cards[0].question()
+            cleaned = clean_field_text(question)
+            if cleaned:
+                return cleaned
+    except Exception:
+        pass
+
+    for field_name in note.keys():
+        value = clean_field_text(note[field_name])
+        if value:
+            return value
+    return ""
+
+
 def collect_notes_from_browser(browser: Any) -> list[SourceNote]:
     mw = browser.mw
     config = get_config(mw)
@@ -63,6 +83,7 @@ def collect_notes_from_browser(browser: Any) -> list[SourceNote]:
                 deck_name=deck_name,
                 fields=fields,
                 tags=list(note.tags),
+                front_text=_front_text_for_note(note),
             )
         )
 
