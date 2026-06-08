@@ -20,6 +20,7 @@ FIELDS = [
 QFMT = """
 <div class="ai-practice-card" data-answer="{{text:Answer}}">
   <div class="question">{{Question}}</div>
+
   <div class="options">
     <button type="button" class="option-button" data-value="{{text:OptionA}}" onclick="aiPracticeChoose(this)">
       <span class="label">A</span><span class="option-text">{{OptionA}}</span>
@@ -34,7 +35,12 @@ QFMT = """
       <span class="label">D</span><span class="option-text">{{OptionD}}</span>
     </button>
   </div>
-  <div class="choice-result" aria-live="polite"></div>
+
+  <div class="feedback-panel" style="display:none;">
+    <div class="choice-result" aria-live="polite"></div>
+    <div class="inline-answer"><b>Answer:</b> <span class="inline-answer-value">{{Answer}}</span></div>
+    <div class="inline-explanation"><b>Explanation:</b> {{Explanation}}</div>
+  </div>
 </div>
 
 <script>
@@ -57,8 +63,9 @@ function aiPracticeChoose(button) {
 
   const answer = aiPracticeNormalize(card.dataset.answer);
   const chosen = aiPracticeNormalize(button.dataset.value);
-  const result = card.querySelector(".choice-result");
   const buttons = card.querySelectorAll(".option-button");
+  const panel = card.querySelector(".feedback-panel");
+  const result = card.querySelector(".choice-result");
 
   buttons.forEach((btn) => {
     const value = aiPracticeNormalize(btn.dataset.value);
@@ -70,13 +77,14 @@ function aiPracticeChoose(button) {
   });
 
   button.classList.add("selected");
+  if (panel) panel.style.display = "block";
 
   if (chosen === answer) {
     result.innerHTML = "✅ Correct";
     result.className = "choice-result result-correct";
   } else {
     button.classList.add("wrong");
-    result.innerHTML = "❌ Incorrect. Correct answer: <b>" + aiPracticeEscapeHtml(answer) + "</b>";
+    result.innerHTML = "❌ Incorrect";
     result.className = "choice-result result-wrong";
   }
 }
@@ -93,33 +101,51 @@ AFMT = """
 
 CSS = """
 .card {
-  font-family: Arial, sans-serif;
+  font-family: Arial, "Microsoft YaHei", sans-serif;
   font-size: 18px;
   text-align: left;
-  line-height: 1.5;
+  line-height: 1.55;
+  background: #fafafa;
+  color: #222;
+}
+.ai-practice-card {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 22px;
+  border: 1px solid #e6e6e6;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
 }
 .question {
-  font-size: 21px;
-  margin-bottom: 18px;
+  font-size: 22px;
+  font-weight: 650;
+  margin-bottom: 22px;
 }
 .options {
   display: grid;
-  gap: 10px;
+  grid-template-columns: 1fr;
+  gap: 12px;
 }
 .option-button {
   width: 100%;
-  border: 1px solid #ddd;
-  border-radius: 8px;
-  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1.5px solid #d9d9d9;
+  border-radius: 14px;
+  padding: 13px 15px;
   background: #fff;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, transform 80ms ease;
 }
 .option-button:hover:not(:disabled) {
-  border-color: #999;
-  background: #f7f7f7;
+  border-color: #6d8cff;
+  background: #f5f7ff;
+  transform: translateY(-1px);
 }
 .option-button:disabled {
   cursor: default;
@@ -133,20 +159,40 @@ CSS = """
   background: #ffebee;
 }
 .label {
+  flex: 0 0 auto;
   display: inline-block;
-  width: 26px;
-  height: 26px;
-  line-height: 26px;
+  width: 30px;
+  height: 30px;
+  line-height: 30px;
   text-align: center;
-  border-radius: 50%;
-  border: 1px solid #999;
-  margin-right: 10px;
+  border-radius: 999px;
+  border: 1px solid #a8a8a8;
+  background: #f7f7f7;
   font-weight: bold;
 }
+.option-button.correct .label {
+  border-color: #2e7d32;
+  background: #2e7d32;
+  color: #fff;
+}
+.option-button.wrong .label {
+  border-color: #c62828;
+  background: #c62828;
+  color: #fff;
+}
+.option-text {
+  flex: 1 1 auto;
+}
+.feedback-panel {
+  margin-top: 18px;
+  padding: 15px 16px;
+  border-radius: 14px;
+  background: #f6f6f6;
+  border: 1px solid #e2e2e2;
+}
 .choice-result {
-  min-height: 28px;
-  margin-top: 16px;
-  font-size: 20px;
+  margin-bottom: 10px;
+  font-size: 21px;
   font-weight: bold;
 }
 .result-correct {
@@ -155,6 +201,9 @@ CSS = """
 .result-wrong {
   color: #c62828;
 }
+.inline-answer, .inline-explanation {
+  margin-top: 8px;
+}
 .answer {
   margin-top: 16px;
   font-size: 20px;
@@ -162,6 +211,11 @@ CSS = """
 .explanation, .source {
   margin-top: 12px;
   color: #555;
+}
+@media (min-width: 700px) {
+  .options {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 """.strip()
 
