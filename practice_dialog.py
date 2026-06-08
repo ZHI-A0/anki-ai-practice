@@ -68,10 +68,16 @@ def _render_practice(result: dict[str, Any]) -> str:
     return "".join(body)
 
 
+def _main_window_from_parent(parent: Any) -> Any:
+    """Return Anki's main window from either mw or a child window like Browser."""
+    return getattr(parent, "mw", parent)
+
+
 class PracticeDialog(QDialog):
-    def __init__(self, mw: Any, notes: list[SourceNote]) -> None:
-        super().__init__(mw)
-        self.mw = mw
+    def __init__(self, parent: Any, notes: list[SourceNote]) -> None:
+        super().__init__(parent)
+        self.parent_window = parent
+        self.mw = _main_window_from_parent(parent)
         self.notes = notes
         self.setWindowTitle("AI Practice")
         self.resize(860, 680)
