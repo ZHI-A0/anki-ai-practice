@@ -111,8 +111,8 @@ def _add_browser_context_menu_item(browser: Any, menu: Any) -> None:
 
 
 def _add_browser_menu_item(browser: Any) -> None:
-    # Different Anki versions expose Browser menus with slightly different names.
-    # We try common locations and silently fall back to the context menu hook.
+    # Some older/newer Anki versions do not expose a Browser init hook.
+    # The right-click context menu hook is the primary integration point.
     action = QAction("AI Practice: Generate from Selection", browser)
     qconnect(action.triggered, lambda: _browser_generate_from_selection(browser))
 
@@ -125,7 +125,14 @@ def _add_browser_menu_item(browser: Any) -> None:
             return
 
 
-_setup_main_menu()
+def _register_browser_hooks() -> None:
+    if hasattr(gui_hooks, "browser_will_show_context_menu"):
+        gui_hooks.browser_will_show_context_menu.append(_add_browser_context_menu_item)
 
-gui_hooks.browser_will_show_context_menu.append(_add_browser_context_menu_item)
-gui_hooks.browser_did_init.append(_add_browser_menu_item)
+    # Anki 25.09.4 does not have browser_did_init. Keep this optional.
+    if hasattr(gui_hooks, "browser_did_init"):
+        gui_hooks.browser_did_init.append(_add_browser_menu_item)
+
+
+_setup_main_menu()
+_register_browser_hooks()
