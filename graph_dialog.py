@@ -31,6 +31,8 @@ from .graph_manager import GraphEdge, GraphNode, LocalGraphManager
 from .graph_store import GRAPH_STORAGE_DIR, load_graph, save_graph
 from .note_selector import collect_selected_notes
 
+VisibleEdge = tuple[str, str, float]
+
 
 class CenterNodeItem(QGraphicsEllipseItem):
     def __init__(self, canvas: "GraphCanvas", node_id: str, radius: float, tooltip: str) -> None:
@@ -70,7 +72,7 @@ class GraphCanvas(QGraphicsView):
     """Pseudo-3D center-focused graph canvas.
 
     - Click node: make it the center.
-    - Drag empty canvas: rotate the graph.
+    - Drag background: rotate the graph.
     - Mouse wheel: zoom.
     - Similarity controls distance and node size.
     """
@@ -94,6 +96,7 @@ class GraphCanvas(QGraphicsView):
         self._rotating = False
         self._last_mouse: tuple[float, float] | None = None
         self._layout3d: dict[str, tuple[float, float, float, float, str, float]] = {}
+        self._visible_edges: list[VisibleEdge] = []
 
     def set_graph(self, manager: LocalGraphManager, graph_type: str) -> None:
         self.manager = manager
@@ -111,7 +114,7 @@ class GraphCanvas(QGraphicsView):
         if not self.manager or node_id not in self.node_by_id:
             return
         self.focus_id = node_id
-        self._layout3d = self._build_similarity_layout(node_id)
+        self._layout3d, self._visible_edges = self._build_similarity_layout(node_id)
         self._render_3d()
         if self.on_focus:
             self.on_focus(node_id, self.graph_type)
@@ -123,15 +126,18 @@ class GraphCanvas(QGraphicsView):
             item = self.itemAt(int(pos[0]), int(pos[1]))
         except Exception:
             item = None
-        if item is None:
-            self._rotating = True
-            self._last_mouse = pos
-            try:
-                event.accept()
-            except Exception:
-                pass
+
+        if isinstance(item, (CenterNodeItem, CenterTextItem)):
+            super().mousePressEvent(event)
             return
-        super().mousePressEvent(event)
+
+        # Background, title, lines, and empty areas all rotate the graph.
+        self._rotating = True
+        self._last_mouse = pos
+        try:
+            event.accept()
+        except Exception:
+            pass
 
     def mouseMoveEvent(self, event: Any) -> None:  # pragma: no cover - Qt callback
         if self._rotating and self._last_mouse:
@@ -152,7 +158,10 @@ class GraphCanvas(QGraphicsView):
     def mouseReleaseEvent(self, event: Any) -> None:  # pragma: no cover - Qt callback
         self._rotating = False
         self._last_mouse = None
-        super().mouseReleaseEvent(event)
+        try:
+            event.accept()
+        except Exception:
+            pass
 
     def wheelEvent(self, event: Any) -> None:  # pragma: no cover - Qt callback
         try:
@@ -170,10 +179,13 @@ class GraphCanvas(QGraphicsView):
         except Exception:
             pass
 
-    def _build_similarity_layout(self, center_id: str) -> dict[str, tuple[float, float, float, float, str, float]]:
+    def _build_similarity_layout(
+        self, center_id: str
+    ) -> tuple[dict[str, tuple[float, float, float, float, str, float]], list[VisibleEdge]]:
         layout: dict[str, tuple[float, float, float, float, str, float]] = {
             center_id: (0.0, 0.0, 0.0, 36.0, "center", 1.0)
         }
+        visible_edges: list[VisibleEdge] = []
         first_neighbors = self.adjacency.get(center_id, [])[:22]
         seen = {center_id}
 
@@ -194,13 +206,12 @@ class GraphCanvas(QGraphicsView):
                 "first",
                 score_norm,
             )
+            # Force the displayed first-hop relationship to be drawn.
+            visible_edges.append((center_id, node_id, score_norm))
 
-        # Second-level nodes are placed near their first-level parent, with
-        # distance controlled by similarity to that parent. This gives a ball-like
-        # local structure instead of two rigid rings.
         second_budget = 58
         second_count = 0
-        for parent_index, (parent_id, parent_score) in enumerate(first_neighbors):
+        for parent_index, (parent_id, _) in enumerate(first_neighbors):
             if parent_id not in layout:
                 continue
             px, py, pz, _, _, _ = layout[parent_id]
@@ -231,10 +242,12 @@ class GraphCanvas(QGraphicsView):
                     "second",
                     child_score_norm,
                 )
+                # Force the displayed second-hop parent relationship to be drawn.
+                visible_edges.append((parent_id, child_id, child_score_norm))
                 second_count += 1
                 if second_count >= second_budget:
-                    return layout
-        return layout
+                    return layout, visible_edges
+        return layout, visible_edges
 
     def _render_3d(self) -> None:
         self.scene.clear()
@@ -248,8 +261,6 @@ class GraphCanvas(QGraphicsView):
 
         for node_id, (x, y, z, size, layer, score) in self._layout3d.items():
             rx, ry, rz = _rotate3((x, y, z), self.yaw, self.pitch)
-            # Positive z is closer to the viewer. Similarity has already shaped
-            # radius; perspective only controls apparent size and overlap.
             perspective = 900.0 / max(260.0, 900.0 - rz)
             scale = self.zoom * perspective
             sx = cx + rx * scale
@@ -264,37 +275,39 @@ class GraphCanvas(QGraphicsView):
         self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def _draw_background(self, width: int, height: int, center_label: str) -> None:
-        self.scene.addRect(0, 0, width, height, QPen(QColor(230, 230, 230)), QBrush(QColor(250, 250, 250)))
+        background = self.scene.addRect(0, 0, width, height, QPen(QColor(230, 230, 230)), QBrush(QColor(250, 250, 250)))
+        background.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        background.setZValue(-1000)
         title = self.scene.addText(
             f"3D Graph · Center: {center_label} · Drag background to rotate · Wheel to zoom · Click node to recenter"
         )
         title.setDefaultTextColor(QColor(80, 80, 80))
         title.setPos(18, 12)
+        title.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         title.setZValue(1000)
 
     def _draw_projected_edges(self, projected: dict[str, tuple[float, float, float, float, str, float]]) -> None:
-        visible_set = set(projected)
         drawn: set[tuple[str, str]] = set()
-        for edge in self.edges:
-            if edge.source not in visible_set or edge.target not in visible_set:
+        for source_id, target_id, score in self._visible_edges:
+            if source_id not in projected or target_id not in projected:
                 continue
-            key = tuple(sorted((edge.source, edge.target)))
+            key = tuple(sorted((source_id, target_id)))
             if key in drawn:
                 continue
             drawn.add(key)
-            x1, y1, z1, _, layer1, _ = projected[edge.source]
-            x2, y2, z2, _, layer2, _ = projected[edge.target]
+            x1, y1, z1, _, layer1, _ = projected[source_id]
+            x2, y2, z2, _, layer2, _ = projected[target_id]
             avg_z = (z1 + z2) / 2
-            opacity = 45 + int(_clamp_score(edge.score) * 150)
+            opacity = 65 + int(_clamp_score(score) * 160)
             if avg_z < -200:
-                opacity = max(25, int(opacity * 0.55))
+                opacity = max(30, int(opacity * 0.55))
             pen = QPen(QColor(120, 120, 120, opacity))
-            pen.setWidth(2 if "center" in (layer1, layer2) else 1)
+            pen.setWidth(3 if "center" in (layer1, layer2) else 1)
             line = self.scene.addLine(x1, y1, x2, y2, pen)
+            line.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
             line.setZValue(avg_z)
 
     def _draw_projected_nodes(self, projected: dict[str, tuple[float, float, float, float, str, float]]) -> None:
-        # Far nodes first, close nodes last.
         for node_id, (x, y, z, radius, layer, score) in sorted(projected.items(), key=lambda item: item[1][2]):
             node = self.node_by_id[node_id]
             tooltip = _node_tooltip(node, layer, self.graph_type, score)
@@ -312,7 +325,6 @@ class GraphCanvas(QGraphicsView):
             text = CenterTextItem(self, node_id, label, tooltip)
             text.setDefaultTextColor(QColor(25, 25, 25) if layer != "second" else QColor(80, 80, 80))
             label_scale = 1.20 if layer == "center" else 0.92 if layer == "first" else 0.72
-            # Hide very small/far second-layer labels to reduce clutter.
             if layer == "second" and radius < 7.8:
                 label_scale = 0.0
             text.setScale(label_scale)
@@ -390,7 +402,6 @@ def _build_undirected_adjacency(edges: list[GraphEdge]) -> dict[str, list[tuple[
 
 
 def _brush_for_layer(layer: str, z: float = 0.0) -> QBrush:
-    # Simulate depth: farther nodes are paler, closer nodes are more saturated.
     depth_boost = max(0, min(55, int((z + 300) / 12)))
     if layer == "center":
         return QBrush(QColor(255, 170, 55))
@@ -538,7 +549,7 @@ class GraphViewerDialog(QDialog):
         self.output = QTextBrowser()
         self.output.setHtml(
             "<h2>View Knowledge Graph</h2>"
-            "<p>Select a graph and click View Graph. Click a node to move it to the center. Drag background to rotate. Wheel to zoom.</p>"
+            "<p>Select a graph and click View Graph. Click a node to move it to the center. Drag background/lines to rotate. Wheel to zoom.</p>"
         )
 
         splitter = QSplitter(Qt.Orientation.Vertical)
