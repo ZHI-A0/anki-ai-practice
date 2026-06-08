@@ -38,13 +38,10 @@ class CenterNodeItem(QGraphicsEllipseItem):
         self.canvas = canvas
         self.node_id = node_id
         self.setToolTip(tooltip)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
 
     def mousePressEvent(self, event: Any) -> None:  # pragma: no cover - Qt callback
-        # focus_node() clears and rebuilds the scene, which deletes this item.
-        # Do not call super() after that, or Qt may access a deleted C++ object.
         try:
             event.accept()
         except Exception:
@@ -58,13 +55,10 @@ class CenterTextItem(QGraphicsTextItem):
         self.canvas = canvas
         self.node_id = node_id
         self.setToolTip(tooltip)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
 
     def mousePressEvent(self, event: Any) -> None:  # pragma: no cover - Qt callback
-        # focus_node() clears and rebuilds the scene, which deletes this item.
-        # Do not call super() after that, or Qt may access a deleted C++ object.
         try:
             event.accept()
         except Exception:
@@ -73,20 +67,20 @@ class CenterTextItem(QGraphicsTextItem):
 
 
 class GraphCanvas(QGraphicsView):
-    """Interactive center-focused graph canvas.
+    """Pseudo-3D center-focused graph canvas.
 
-    Clicking a node recenters the view around that node:
-    - center node: largest
-    - first-hop neighbors: inner ring, medium size
-    - second-hop neighbors: outer ring, smaller size
+    - Click node: make it the center.
+    - Drag empty canvas: rotate the graph.
+    - Mouse wheel: zoom.
+    - Similarity controls distance and node size.
     """
 
     def __init__(self, parent: Any = None) -> None:
         super().__init__(parent)
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
-        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-        self.setMinimumHeight(460)
+        self.setDragMode(QGraphicsView.DragMode.NoDrag)
+        self.setMinimumHeight(500)
         self.manager: LocalGraphManager | None = None
         self.graph_type = "spelling"
         self.node_by_id: dict[str, GraphNode] = {}
@@ -94,6 +88,12 @@ class GraphCanvas(QGraphicsView):
         self.adjacency: dict[str, list[tuple[str, float]]] = {}
         self.focus_id: str | None = None
         self.on_focus: Callable[[str, str], None] | None = None
+        self.yaw = -0.35
+        self.pitch = 0.22
+        self.zoom = 1.0
+        self._rotating = False
+        self._last_mouse: tuple[float, float] | None = None
+        self._layout3d: dict[str, tuple[float, float, float, float, str, float]] = {}
 
     def set_graph(self, manager: LocalGraphManager, graph_type: str) -> None:
         self.manager = manager
@@ -111,52 +111,169 @@ class GraphCanvas(QGraphicsView):
         if not self.manager or node_id not in self.node_by_id:
             return
         self.focus_id = node_id
-        self._draw_centered(node_id)
+        self._layout3d = self._build_similarity_layout(node_id)
+        self._render_3d()
         if self.on_focus:
             self.on_focus(node_id, self.graph_type)
 
-    def _draw_centered(self, center_id: str) -> None:
-        self.scene.clear()
-        center = self.node_by_id[center_id]
-        first = [node_id for node_id, _ in self.adjacency.get(center_id, [])[:18] if node_id in self.node_by_id]
-        first_set = set(first)
-        second: list[str] = []
-        seen = {center_id, *first_set}
-        for first_id in first:
-            for candidate_id, _ in self.adjacency.get(first_id, [])[:8]:
-                if candidate_id in self.node_by_id and candidate_id not in seen:
-                    second.append(candidate_id)
-                    seen.add(candidate_id)
-                if len(second) >= 42:
-                    break
-            if len(second) >= 42:
-                break
+    def mousePressEvent(self, event: Any) -> None:  # pragma: no cover - Qt callback
+        pos = _event_xy(event)
+        item = None
+        try:
+            item = self.itemAt(int(pos[0]), int(pos[1]))
+        except Exception:
+            item = None
+        if item is None:
+            self._rotating = True
+            self._last_mouse = pos
+            try:
+                event.accept()
+            except Exception:
+                pass
+            return
+        super().mousePressEvent(event)
 
-        visible_ids = [center_id, *first, *second]
-        visible_set = set(visible_ids)
-        width = 1180
-        height = 760
+    def mouseMoveEvent(self, event: Any) -> None:  # pragma: no cover - Qt callback
+        if self._rotating and self._last_mouse:
+            x, y = _event_xy(event)
+            last_x, last_y = self._last_mouse
+            self.yaw += (x - last_x) * 0.008
+            self.pitch += (y - last_y) * 0.008
+            self.pitch = max(-1.25, min(1.25, self.pitch))
+            self._last_mouse = (x, y)
+            self._render_3d()
+            try:
+                event.accept()
+            except Exception:
+                pass
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: Any) -> None:  # pragma: no cover - Qt callback
+        self._rotating = False
+        self._last_mouse = None
+        super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event: Any) -> None:  # pragma: no cover - Qt callback
+        try:
+            delta = event.angleDelta().y()
+        except Exception:
+            delta = 0
+        if delta > 0:
+            self.zoom *= 1.10
+        elif delta < 0:
+            self.zoom /= 1.10
+        self.zoom = max(0.45, min(2.25, self.zoom))
+        self._render_3d()
+        try:
+            event.accept()
+        except Exception:
+            pass
+
+    def _build_similarity_layout(self, center_id: str) -> dict[str, tuple[float, float, float, float, str, float]]:
+        layout: dict[str, tuple[float, float, float, float, str, float]] = {
+            center_id: (0.0, 0.0, 0.0, 36.0, "center", 1.0)
+        }
+        first_neighbors = self.adjacency.get(center_id, [])[:22]
+        seen = {center_id}
+
+        first_dirs = _fibonacci_sphere(len(first_neighbors), phase=0.31)
+        for index, (node_id, score) in enumerate(first_neighbors):
+            if node_id not in self.node_by_id or node_id in seen:
+                continue
+            seen.add(node_id)
+            direction = first_dirs[index]
+            score_norm = _clamp_score(score)
+            distance = 115.0 + (1.0 - score_norm) * 310.0
+            size = 14.0 + score_norm * 18.0
+            layout[node_id] = (
+                direction[0] * distance,
+                direction[1] * distance,
+                direction[2] * distance,
+                size,
+                "first",
+                score_norm,
+            )
+
+        # Second-level nodes are placed near their first-level parent, with
+        # distance controlled by similarity to that parent. This gives a ball-like
+        # local structure instead of two rigid rings.
+        second_budget = 58
+        second_count = 0
+        for parent_index, (parent_id, parent_score) in enumerate(first_neighbors):
+            if parent_id not in layout:
+                continue
+            px, py, pz, _, _, _ = layout[parent_id]
+            parent_vec = _normalize3((px, py, pz))
+            candidates = self.adjacency.get(parent_id, [])[:8]
+            local_dirs = _fibonacci_sphere(len(candidates), phase=0.17 + parent_index * 0.07)
+            for candidate_index, (child_id, child_score) in enumerate(candidates):
+                if child_id not in self.node_by_id or child_id in seen:
+                    continue
+                seen.add(child_id)
+                child_score_norm = _clamp_score(child_score)
+                local_dir = local_dirs[candidate_index]
+                mixed = _normalize3(
+                    (
+                        parent_vec[0] * 0.70 + local_dir[0] * 0.30,
+                        parent_vec[1] * 0.70 + local_dir[1] * 0.30,
+                        parent_vec[2] * 0.70 + local_dir[2] * 0.30,
+                    )
+                )
+                parent_distance = math.sqrt(px * px + py * py + pz * pz)
+                distance = parent_distance + 95.0 + (1.0 - child_score_norm) * 260.0
+                size = 7.0 + child_score_norm * 9.0
+                layout[child_id] = (
+                    mixed[0] * distance,
+                    mixed[1] * distance,
+                    mixed[2] * distance,
+                    size,
+                    "second",
+                    child_score_norm,
+                )
+                second_count += 1
+                if second_count >= second_budget:
+                    return layout
+        return layout
+
+    def _render_3d(self) -> None:
+        self.scene.clear()
+        if not self.focus_id or not self._layout3d:
+            return
+        width = 1240
+        height = 780
         cx = width / 2
         cy = height / 2
-        positions: dict[str, tuple[float, float, float, str]] = {center_id: (cx, cy, 30, "center")}
+        projected: dict[str, tuple[float, float, float, float, str, float]] = {}
 
-        _place_ring(first, positions, cx, cy, radius=175, node_radius=18, layer="first")
-        _place_ring(second, positions, cx, cy, radius=325, node_radius=10, layer="second")
+        for node_id, (x, y, z, size, layer, score) in self._layout3d.items():
+            rx, ry, rz = _rotate3((x, y, z), self.yaw, self.pitch)
+            # Positive z is closer to the viewer. Similarity has already shaped
+            # radius; perspective only controls apparent size and overlap.
+            perspective = 900.0 / max(260.0, 900.0 - rz)
+            scale = self.zoom * perspective
+            sx = cx + rx * scale
+            sy = cy + ry * scale
+            projected[node_id] = (sx, sy, rz, max(4.0, size * scale), layer, score)
 
-        self._draw_background(width, height, center.term)
-        self._draw_edges(visible_set, positions)
-        self._draw_nodes(visible_ids, positions)
+        center_label = self.node_by_id.get(self.focus_id).term if self.focus_id in self.node_by_id else ""
+        self._draw_background(width, height, center_label)
+        self._draw_projected_edges(projected)
+        self._draw_projected_nodes(projected)
         self.scene.setSceneRect(0, 0, width, height)
         self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def _draw_background(self, width: int, height: int, center_label: str) -> None:
         self.scene.addRect(0, 0, width, height, QPen(QColor(230, 230, 230)), QBrush(QColor(250, 250, 250)))
-        title = self.scene.addText(f"Center: {center_label}  ·  Click any node to recenter")
+        title = self.scene.addText(
+            f"3D Graph · Center: {center_label} · Drag background to rotate · Wheel to zoom · Click node to recenter"
+        )
         title.setDefaultTextColor(QColor(80, 80, 80))
         title.setPos(18, 12)
-        title.setZValue(10)
+        title.setZValue(1000)
 
-    def _draw_edges(self, visible_set: set[str], positions: dict[str, tuple[float, float, float, str]]) -> None:
+    def _draw_projected_edges(self, projected: dict[str, tuple[float, float, float, float, str, float]]) -> None:
+        visible_set = set(projected)
         drawn: set[tuple[str, str]] = set()
         for edge in self.edges:
             if edge.source not in visible_set or edge.target not in visible_set:
@@ -165,57 +282,94 @@ class GraphCanvas(QGraphicsView):
             if key in drawn:
                 continue
             drawn.add(key)
-            x1, y1, _, layer1 = positions[edge.source]
-            x2, y2, _, layer2 = positions[edge.target]
-            opacity = 50 + int(min(0.9, max(0.05, edge.score)) * 140)
-            pen = QPen(QColor(130, 130, 130, opacity))
+            x1, y1, z1, _, layer1, _ = projected[edge.source]
+            x2, y2, z2, _, layer2, _ = projected[edge.target]
+            avg_z = (z1 + z2) / 2
+            opacity = 45 + int(_clamp_score(edge.score) * 150)
+            if avg_z < -200:
+                opacity = max(25, int(opacity * 0.55))
+            pen = QPen(QColor(120, 120, 120, opacity))
             pen.setWidth(2 if "center" in (layer1, layer2) else 1)
             line = self.scene.addLine(x1, y1, x2, y2, pen)
-            line.setZValue(1)
+            line.setZValue(avg_z)
 
-    def _draw_nodes(self, visible_ids: list[str], positions: dict[str, tuple[float, float, float, str]]) -> None:
-        for node_id in visible_ids:
+    def _draw_projected_nodes(self, projected: dict[str, tuple[float, float, float, float, str, float]]) -> None:
+        # Far nodes first, close nodes last.
+        for node_id, (x, y, z, radius, layer, score) in sorted(projected.items(), key=lambda item: item[1][2]):
             node = self.node_by_id[node_id]
-            x, y, radius, layer = positions[node_id]
-            tooltip = _node_tooltip(node, layer, self.graph_type)
-            brush = _brush_for_layer(layer)
+            tooltip = _node_tooltip(node, layer, self.graph_type, score)
+            brush = _brush_for_layer(layer, z)
             pen = QPen(QColor(255, 255, 255))
             pen.setWidth(2 if layer == "center" else 1)
             ellipse = CenterNodeItem(self, node_id, radius, tooltip)
             ellipse.setBrush(brush)
             ellipse.setPen(pen)
             ellipse.setPos(x, y)
-            ellipse.setZValue(4 if layer == "center" else 3)
+            ellipse.setZValue(500 + z)
             self.scene.addItem(ellipse)
 
             label = node.term[:28 if layer == "center" else 20]
             text = CenterTextItem(self, node_id, label, tooltip)
-            text.setDefaultTextColor(QColor(25, 25, 25) if layer != "second" else QColor(90, 90, 90))
-            text.setScale(1.25 if layer == "center" else 1.0 if layer == "first" else 0.82)
-            text.setPos(x + radius + 6, y - radius)
-            text.setZValue(5)
-            self.scene.addItem(text)
+            text.setDefaultTextColor(QColor(25, 25, 25) if layer != "second" else QColor(80, 80, 80))
+            label_scale = 1.20 if layer == "center" else 0.92 if layer == "first" else 0.72
+            # Hide very small/far second-layer labels to reduce clutter.
+            if layer == "second" and radius < 7.8:
+                label_scale = 0.0
+            text.setScale(label_scale)
+            text.setPos(x + radius + 5, y - radius)
+            text.setZValue(520 + z)
+            if label_scale > 0:
+                self.scene.addItem(text)
 
 
-def _place_ring(
-    node_ids: list[str],
-    positions: dict[str, tuple[float, float, float, str]],
-    cx: float,
-    cy: float,
-    radius: float,
-    node_radius: float,
-    layer: str,
-) -> None:
-    if not node_ids:
-        return
-    for index, node_id in enumerate(node_ids):
-        angle = 2 * math.pi * index / len(node_ids)
-        positions[node_id] = (
-            cx + radius * math.cos(angle),
-            cy + radius * math.sin(angle),
-            node_radius,
-            layer,
-        )
+def _event_xy(event: Any) -> tuple[float, float]:
+    try:
+        position = event.position()
+        return float(position.x()), float(position.y())
+    except Exception:
+        try:
+            position = event.pos()
+            return float(position.x()), float(position.y())
+        except Exception:
+            return 0.0, 0.0
+
+
+def _fibonacci_sphere(count: int, phase: float = 0.0) -> list[tuple[float, float, float]]:
+    if count <= 0:
+        return []
+    points: list[tuple[float, float, float]] = []
+    golden_angle = math.pi * (3 - math.sqrt(5))
+    for index in range(count):
+        y = 1 - (index / max(1, count - 1)) * 2
+        radius = math.sqrt(max(0.0, 1 - y * y))
+        theta = golden_angle * (index + phase)
+        points.append((math.cos(theta) * radius, y, math.sin(theta) * radius))
+    return points
+
+
+def _normalize3(vector: tuple[float, float, float]) -> tuple[float, float, float]:
+    x, y, z = vector
+    length = math.sqrt(x * x + y * y + z * z)
+    if length <= 1e-9:
+        return 1.0, 0.0, 0.0
+    return x / length, y / length, z / length
+
+
+def _rotate3(vector: tuple[float, float, float], yaw: float, pitch: float) -> tuple[float, float, float]:
+    x, y, z = vector
+    cos_yaw = math.cos(yaw)
+    sin_yaw = math.sin(yaw)
+    x1 = x * cos_yaw + z * sin_yaw
+    z1 = -x * sin_yaw + z * cos_yaw
+    cos_pitch = math.cos(pitch)
+    sin_pitch = math.sin(pitch)
+    y2 = y * cos_pitch - z1 * sin_pitch
+    z2 = y * sin_pitch + z1 * cos_pitch
+    return x1, y2, z2
+
+
+def _clamp_score(score: float) -> float:
+    return max(0.0, min(1.0, float(score or 0.0)))
 
 
 def _build_undirected_adjacency(edges: list[GraphEdge]) -> dict[str, list[tuple[str, float]]]:
@@ -235,19 +389,22 @@ def _build_undirected_adjacency(edges: list[GraphEdge]) -> dict[str, list[tuple[
     return adjacency
 
 
-def _brush_for_layer(layer: str) -> QBrush:
+def _brush_for_layer(layer: str, z: float = 0.0) -> QBrush:
+    # Simulate depth: farther nodes are paler, closer nodes are more saturated.
+    depth_boost = max(0, min(55, int((z + 300) / 12)))
     if layer == "center":
         return QBrush(QColor(255, 170, 55))
     if layer == "first":
-        return QBrush(QColor(79, 107, 237))
-    return QBrush(QColor(145, 180, 255))
+        return QBrush(QColor(60 + depth_boost, 95 + depth_boost, 225))
+    return QBrush(QColor(120 + depth_boost, 160 + depth_boost, 245))
 
 
-def _node_tooltip(node: GraphNode, layer: str, graph_type: str) -> str:
+def _node_tooltip(node: GraphNode, layer: str, graph_type: str, score: float = 1.0) -> str:
     return (
         f"{node.term}\n"
         f"Layer: {layer}\n"
-        f"Graph: {graph_type}\n\n"
+        f"Graph: {graph_type}\n"
+        f"Similarity score: {score:.3f}\n\n"
         f"Meaning: {node.meaning}\n\n"
         f"Example: {node.example}"
     )
@@ -284,7 +441,7 @@ class GraphBuildDialog(QDialog):
             f"graph_top_k: <b>{html.escape(str(config.get('graph_top_k')))}</b></p>"
             "<p>The graph is saved as JSON in:</p>"
             f"<pre>{html.escape(GRAPH_STORAGE_DIR)}</pre>"
-            "<p>After building, open <b>Tools → AI Practice → View Knowledge Graph</b> for the interactive graph canvas.</p>"
+            "<p>After building, open <b>Tools → AI Practice → View Knowledge Graph</b> for the 3D graph canvas.</p>"
         )
 
         layout = QVBoxLayout()
@@ -381,7 +538,7 @@ class GraphViewerDialog(QDialog):
         self.output = QTextBrowser()
         self.output.setHtml(
             "<h2>View Knowledge Graph</h2>"
-            "<p>Select a graph and click View Graph. Click a node or its label to move it to the center. Nodes are draggable. Hover nodes to see details.</p>"
+            "<p>Select a graph and click View Graph. Click a node to move it to the center. Drag background to rotate. Wheel to zoom.</p>"
         )
 
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -434,7 +591,7 @@ def _render_build_summary(deck_name: str, source_count: int, path: str, manager:
         f"<p>Spelling edges: <b>{len(manager.graphs.get('spelling', []))}</b></p>"
         f"<p>Meaning edges: <b>{len(manager.graphs.get('meaning', []))}</b></p>"
         f"<p>Saved to:</p><pre>{html.escape(path)}</pre>"
-        "<p>Open <b>Tools → AI Practice → View Knowledge Graph</b> to inspect the center-focused graph.</p>"
+        "<p>Open <b>Tools → AI Practice → View Knowledge Graph</b> to inspect the 3D graph.</p>"
         "<h3>Spelling preview</h3>"
         + _render_rows_table(manager.preview_rows("spelling", 40))
         + "<h3>Meaning preview</h3>"
