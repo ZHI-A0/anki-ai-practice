@@ -19,6 +19,7 @@ from .config import get_config
 from .llm_client import LLMError, chat_completion
 from .models import SourceNote
 from .prompt_builder import build_prompt
+from .source_compactor import compact_notes_for_llm
 
 
 def _render_notes_preview(notes: list[SourceNote]) -> str:
@@ -115,10 +116,14 @@ class PracticeDialog(QDialog):
         config = get_config(self.mw)
         question_type = str(self.question_type.currentData())
         language = str(config.get("language") or "zh-CN")
-        messages = build_prompt(self.notes, question_type, language)
+        compact_source = compact_notes_for_llm(self.notes, config)
+        messages = build_prompt(self.notes, question_type, language, config)
 
         self.generate_button.setEnabled(False)
-        self.output.setHtml("<p>Generating practice questions...</p>")
+        self.output.setHtml(
+            "<p>Generating practice questions...</p>"
+            f"<p>Compressed source length: {len(compact_source)} characters.</p>"
+        )
         try:
             result = chat_completion(config, messages)
         except LLMError as exc:
