@@ -22,9 +22,15 @@ Schema:
   ]
 }
 Rules:
-- For multiple_choice, every question must have 4 options.
+- For multiple_choice, every question must have exactly 4 options.
 - The answer must exactly match one option.
 - Do not include option letters in the option strings.
+- The correct answer should come from the source learning items.
+- Distractors may come from outside the source notes when needed.
+- Distractors must be semantically, grammatically, and difficulty-level plausible.
+- Avoid trivial distractors that share only the same prefix, spelling pattern, or first letter.
+- Avoid making all 4 options start with the same letter/prefix unless the learning task specifically requires it.
+- For vocabulary questions, prefer distractors with the same part of speech but different roots/prefixes and similar frequency.
 """.strip()
 
 
@@ -55,16 +61,19 @@ def build_prompt(
         )
     else:
         task = (
-            "Generate a set of multiple-choice temporary practice cards from the user's Anki notes. "
+            "Generate a set of professional multiple-choice Anki practice cards from the user's source items. "
             "Use cloze/fill-in-the-blank style when appropriate. "
             "Each question should test one selected learning item. "
-            "Each question must have exactly 4 plausible options, with one correct answer. "
+            "Each question must have exactly 4 options: 1 correct answer and 3 strong distractors. "
+            "Do not simply use neighboring selected items as distractors if they are visually similar or all share the same prefix. "
+            "For English vocabulary, make distractors plausible in the sentence, same part of speech where possible, but not all starting with the same letter. "
             "Question stems and options should follow the source item's language; explanations may be concise."
         )
 
     system = (
-        "You are an assistant that creates high-quality Anki practice cards. "
-        "Use only the compact source notes provided by the user. "
+        "You are an expert assessment designer creating high-quality Anki practice cards. "
+        "Use the compact source notes to decide which learning items should be tested. "
+        "You may use general language knowledge to create plausible distractors. "
         "Ignore note IDs, metadata, HTML artifacts, audio markers, and unrelated dictionary noise if present. "
         "Make the practice useful for memory consolidation, not trivia. "
         f"{_language_instruction(language)} "
