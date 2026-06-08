@@ -31,6 +31,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "local_meaning_fields": "中文释义,Meaning,Back,背面,释义,答案",
     "local_translation_example_fields": "中文例句,Translation Example,Example Translation,译文,中文翻译",
     "local_graph_fields": "英语单词,Front,正面,Expression,Term,单词,词条",
+    "local_option_source": "saved_graph",
+    "local_option_graph_type": "meaning",
     "local_explanation_source": "meaning_and_translation_example",
     "use_existing_examples": True,
 
@@ -121,6 +123,8 @@ def get_config_summary(window: Any = None) -> str:
             f"explanation_language: {config.get('explanation_language')}",
             f"graph_max_notes: {config.get('graph_max_notes')}",
             f"graph_top_k: {config.get('graph_top_k')}",
+            f"local_option_source: {config.get('local_option_source')}",
+            f"local_option_graph_type: {config.get('local_option_graph_type')}",
             f"local_example_source: {config.get('local_example_source')}",
             f"base_url: {config.get('base_url')}",
             f"model: {config.get('model')}",
