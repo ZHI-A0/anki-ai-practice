@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from typing import Any
+
 from .models import SourceNote
+from .source_compactor import compact_notes_for_llm
 
 
 SCHEMA_INSTRUCTIONS = """
@@ -21,8 +24,14 @@ Schema:
 """.strip()
 
 
-def build_prompt(notes: list[SourceNote], question_type: str, language: str) -> list[dict[str, str]]:
-    source_text = "\n\n---\n\n".join(note.compact_text() for note in notes)
+def build_prompt(
+    notes: list[SourceNote],
+    question_type: str,
+    language: str,
+    config: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
+    config = config or {}
+    source_text = compact_notes_for_llm(notes, config)
 
     if question_type == "qa":
         task = (
@@ -38,13 +47,14 @@ def build_prompt(notes: list[SourceNote], question_type: str, language: str) -> 
 
     system = (
         "You are an assistant that creates high-quality learning practice for Anki users. "
-        "Use only the information in the provided notes. "
+        "Use only the compact source notes provided by the user. "
+        "Ignore note IDs, metadata, HTML artifacts, audio markers, and unrelated dictionary noise if present. "
         "Make the practice useful for memory consolidation, not trivia. "
         f"Respond in {language}. "
         + SCHEMA_INSTRUCTIONS
     )
 
-    user = f"Task: {task}\n\nSource Anki notes:\n{source_text}"
+    user = f"Task: {task}\n\nCompact source Anki notes:\n{source_text}"
 
     return [
         {"role": "system", "content": system},
