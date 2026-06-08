@@ -15,8 +15,9 @@ from aqt.qt import (
     QVBoxLayout,
     Qt,
 )
-from aqt.utils import showWarning
+from aqt.utils import showInfo, showWarning
 
+from .card_creator import save_practice_as_cards
 from .config import get_config
 from .llm_client import LLMError, chat_completion
 from .models import SourceNote
@@ -85,6 +86,7 @@ class PracticeDialog(QDialog):
         self.parent_window = parent
         self.mw = _main_window_from_parent(parent)
         self.notes = notes
+        self.generated_result: dict[str, Any] | None = None
         self.setWindowTitle("AI Practice")
         self.resize(1100, 760)
 
@@ -95,12 +97,17 @@ class PracticeDialog(QDialog):
         self.generate_button = QPushButton("Generate Temporary Cards")
         self.generate_button.clicked.connect(self._generate)
 
+        self.save_button = QPushButton("Save as Anki Cards")
+        self.save_button.setEnabled(False)
+        self.save_button.clicked.connect(self._save_as_cards)
+
         top = QHBoxLayout()
         top.addWidget(QLabel(f"Selected notes: {len(notes)}"))
         top.addWidget(QLabel("Practice type:"))
         top.addWidget(self.question_type)
         top.addStretch(1)
         top.addWidget(self.generate_button)
+        top.addWidget(self.save_button)
 
         self.selection_preview = QTextBrowser()
         self.selection_preview.setOpenExternalLinks(True)
@@ -117,6 +124,8 @@ class PracticeDialog(QDialog):
             "<h2>Temporary Practice Cards</h2>"
             "<p>Click <b>Generate Temporary Cards</b> to create a temporary practice set. "
             "Your selection preview will remain visible on the left.</p>"
+            "<p>After generation, click <b>Save as Anki Cards</b> to create real cards in "
+            "<b>AI Practice::Generated</b>.</p>"
         )
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -136,6 +145,8 @@ class PracticeDialog(QDialog):
         compact_source = compact_notes_for_llm(self.notes, config)
         messages = build_prompt(self.notes, question_type, language, config)
 
+        self.generated_result = None
+        self.save_button.setEnabled(False)
         self.generate_button.setEnabled(False)
         self.practice_view.setHtml(
             "<h2>Generating...</h2>"
@@ -154,4 +165,19 @@ class PracticeDialog(QDialog):
         finally:
             self.generate_button.setEnabled(True)
 
+        self.generated_result = result
+        self.save_button.setEnabled(True)
         self.practice_view.setHtml(_render_practice_cards(result))
+
+    def _save_as_cards(self) -> None:
+        if not self.generated_result:
+            showWarning("Generate practice cards first.")
+            return
+
+        try:
+            added = save_practice_as_cards(self.mw, self.generated_result, self.notes)
+        except Exception as exc:
+            showWarning(f"Failed to save generated cards:\n{exc}")
+            return
+
+        showInfo(f"Saved {added} cards to AI Practice::Generated.")
