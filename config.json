@@ -6,6 +6,7 @@
   "default_question_type": "cloze",
   "max_notes": 30,
   "temperature": 0.7,
+  "source_mode": "front",
   "preferred_fields": [
     "英语单词",
     "中文释义",
