@@ -44,14 +44,30 @@ def _make_blank(sentence: str, answer: str) -> str:
     return f"{sentence}\n\nChoose the best answer: _____"
 
 
-def _meaning_explanation(answer: str, meaning: str, explanation_language: str) -> str:
+def _meaning_explanation(
+    answer: str,
+    meaning: str,
+    translation_example: str,
+    explanation_language: str,
+) -> str:
+    parts: list[str] = []
     if meaning:
         if explanation_language.lower().startswith("zh"):
-            return f"{answer}：{meaning}"
-        return f"{answer}: {meaning}"
-    if explanation_language.lower().startswith("zh"):
-        return f"正确答案是 {answer}。"
-    return f"The correct answer is {answer}."
+            parts.append(f"{answer}：{meaning}")
+        else:
+            parts.append(f"{answer}: {meaning}")
+    elif explanation_language.lower().startswith("zh"):
+        parts.append(f"正确答案是 {answer}。")
+    else:
+        parts.append(f"The correct answer is {answer}.")
+
+    if translation_example:
+        if explanation_language.lower().startswith("zh"):
+            parts.append(f"中文例句：{translation_example}")
+        else:
+            parts.append(f"Translation/example: {translation_example}")
+
+    return "<br>".join(parts)
 
 
 def generate_local_practice(notes: list[Any], config: dict[str, Any]) -> dict[str, Any]:
@@ -59,6 +75,7 @@ def generate_local_practice(notes: list[Any], config: dict[str, Any]) -> dict[st
     target_fields = split_fields(config.get("local_target_fields"))
     example_fields = split_fields(config.get("local_example_fields"))
     meaning_fields = split_fields(config.get("local_meaning_fields"))
+    translation_example_fields = split_fields(config.get("local_translation_example_fields"))
     explanation_language = str(config.get("explanation_language") or "zh-CN")
     use_existing_examples = bool(config.get("use_existing_examples", True))
 
@@ -81,7 +98,8 @@ def generate_local_practice(notes: list[Any], config: dict[str, Any]) -> dict[st
         question = _make_blank(example, answer)
 
         meaning = _first_field(note, meaning_fields)
-        explanation = _meaning_explanation(answer, meaning, explanation_language)
+        translation_example = _first_sentence(_first_field(note, translation_example_fields))
+        explanation = _meaning_explanation(answer, meaning, translation_example, explanation_language)
 
         options = [answer, *distractors[:3]]
         # Ensure unique options after normalization.
