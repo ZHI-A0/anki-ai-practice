@@ -20,7 +20,9 @@ from aqt.utils import showInfo, showWarning
 
 from .card_creator import save_practice_as_cards
 from .config import get_config
+from .knowledge_graph_distractor import apply_source_graph_options
 from .llm_client import chat_completion
+from .local_generator import generate_local_practice
 from .models import SourceNote
 from .prompt_builder import build_prompt
 from .source_compactor import clean_field_text, compact_notes_for_llm
@@ -49,8 +51,8 @@ def _render_practice_cards(result: dict[str, Any]) -> str:
         "<style>"
         ".practice-card{border:1px solid #e5e5e5;border-radius:14px;padding:14px;margin:14px 0;background:#fff;}"
         ".practice-question{font-size:16px;font-weight:600;margin-bottom:12px;}"
-        ".practice-options{display:grid;grid-template-columns:1fr 1fr;gap:8px;}"
-        ".practice-option{border:1px solid #ddd;border-radius:10px;padding:8px 10px;background:#fafafa;}"
+        ".practice-options{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;}"
+        ".practice-option{border:1px solid #ddd;border-radius:10px;padding:8px 10px;background:#fafafa;overflow-wrap:anywhere;}"
         ".practice-badge{display:inline-block;width:24px;height:24px;line-height:24px;text-align:center;border-radius:50%;border:1px solid #aaa;margin-right:8px;font-weight:bold;}"
         ".practice-answer{margin-top:12px;padding:10px;border-radius:10px;background:#f6f6f6;}"
         "</style>"
@@ -104,7 +106,7 @@ class PracticeDialog(QDialog):
         self.resize(1100, 760)
 
         self.question_type = QComboBox()
-        self.question_type.addItem("Temporary cards / 临时练习卡", "cloze")
+        self.question_type.addItem("Temporary cards / 临时练习卡", "multiple_choice")
         self.question_type.addItem("Q&A / 问答题", "qa")
 
         self.generate_button = QPushButton("Generate Temporary Cards")
@@ -126,7 +128,7 @@ class PracticeDialog(QDialog):
         self.selection_preview.setOpenExternalLinks(True)
         self.selection_preview.setHtml(
             "<h2>Selection Preview</h2>"
-            "<p>The model will use the front-side display text by default.</p>"
+            "<p>AI Practice will use your configured generation mode and fields.</p>"
             "<hr>"
             + _render_notes_preview(notes)
         )
@@ -153,22 +155,32 @@ class PracticeDialog(QDialog):
 
     def _generate(self) -> None:
         config = get_config(self.mw)
+        generation_mode = str(config.get("generation_mode") or "local_first")
         question_type = str(self.question_type.currentData())
-        language = str(config.get("language") or "auto")
+        language = str(config.get("question_language") or "source")
         compact_source = compact_notes_for_llm(self.notes, config)
-        messages = build_prompt(self.notes, question_type, language, config)
 
         self.generated_result = None
         self.save_button.setEnabled(False)
         self.generate_button.setEnabled(False)
+        mode_label = "Local-first" if generation_mode == "local_first" else "LLM-first"
         self.practice_view.setHtml(
             "<h2>Generating...</h2>"
+            f"<p>Mode: <b>{html.escape(mode_label)}</b></p>"
             "<p>The request is running in the background. You can keep Anki open while it completes.</p>"
             f"<p>Compressed source length: {len(compact_source)} characters.</p>"
         )
 
         def run_in_background(_: Any) -> dict[str, Any]:
-            return chat_completion(config, messages)
+            if generation_mode == "local_first":
+                # Local-first never calls the LLM API.
+                return generate_local_practice(self.notes, config)
+
+            messages = build_prompt(self.notes, question_type, language, config)
+            result = chat_completion(config, messages)
+            if str(config.get("llm_option_policy") or "source_graph") == "source_graph":
+                result = apply_source_graph_options(result, self.notes)
+            return result
 
         def on_success(result: dict[str, Any]) -> None:
             self.generated_result = result
@@ -196,10 +208,12 @@ class PracticeDialog(QDialog):
             showWarning("Generate practice cards first.")
             return
 
+        config = get_config(self.mw)
+        deck_name = str(config.get("save_deck_name") or "AI Practice::Generated")
         try:
-            added = save_practice_as_cards(self.mw, self.generated_result, self.notes)
+            added = save_practice_as_cards(self.mw, self.generated_result, self.notes, deck_name=deck_name)
         except Exception as exc:
             showWarning(f"Failed to save generated cards:\n{exc}")
             return
 
-        showInfo(f"Saved {added} cards to AI Practice::Generated.")
+        showInfo(f"Saved {added} cards to {deck_name}.")
