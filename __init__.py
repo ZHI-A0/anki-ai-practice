@@ -1,7 +1,7 @@
 """AI Practice add-on for Anki.
 
 This module registers menu actions and wires together note selection,
-LLM generation, and the practice dialog.
+LLM generation, graph management, and settings.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from aqt import gui_hooks, mw
 from aqt.qt import QAction, qconnect
 from aqt.utils import showInfo, showWarning
 
+from .graph_dialog import GraphBuildDialog, GraphViewerDialog
 from .note_selector import collect_notes_from_browser, collect_selected_notes
 from .practice_dialog import PracticeDialog
 from .settings_dialog import SettingsDialog
@@ -55,6 +56,16 @@ def _show_save_as_cards_placeholder() -> None:
     )
 
 
+def _open_graph_builder() -> None:
+    dialog = GraphBuildDialog(mw)
+    dialog.exec()
+
+
+def _open_graph_viewer() -> None:
+    dialog = GraphViewerDialog(mw)
+    dialog.exec()
+
+
 def _open_settings() -> None:
     dialog = SettingsDialog(mw)
     dialog.exec()
@@ -77,6 +88,16 @@ def _setup_main_menu() -> None:
     save_action = QAction("Save Generated Practice as Cards (coming soon)", mw)
     qconnect(save_action.triggered, _show_save_as_cards_placeholder)
     menu.addAction(save_action)
+
+    menu.addSeparator()
+
+    build_graph_action = QAction("Build Knowledge Graph", mw)
+    qconnect(build_graph_action.triggered, _open_graph_builder)
+    menu.addAction(build_graph_action)
+
+    view_graph_action = QAction("View Knowledge Graph", mw)
+    qconnect(view_graph_action.triggered, _open_graph_viewer)
+    menu.addAction(view_graph_action)
 
     menu.addSeparator()
 
