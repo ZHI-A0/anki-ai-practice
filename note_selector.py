@@ -38,11 +38,8 @@ def _selected_note_ids(browser: Any) -> list[int]:
     return []
 
 
-def collect_selected_notes(mw: Any) -> list[SourceNote]:
-    browser = _active_browser(mw)
-    if browser is None:
-        return []
-
+def collect_notes_from_browser(browser: Any) -> list[SourceNote]:
+    mw = browser.mw
     config = get_config(mw)
     max_notes = int(config.get("max_notes") or 30)
     note_ids = _selected_note_ids(browser)[:max_notes]
@@ -70,3 +67,10 @@ def collect_selected_notes(mw: Any) -> list[SourceNote]:
         )
 
     return notes
+
+
+def collect_selected_notes(mw: Any) -> list[SourceNote]:
+    browser = _active_browser(mw)
+    if browser is None:
+        return []
+    return collect_notes_from_browser(browser)
