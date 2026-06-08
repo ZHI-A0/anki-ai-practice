@@ -6,45 +6,92 @@ from typing import Any
 NOTE_TYPE_NAME = "AI Practice Multiple Choice"
 DEFAULT_DECK_NAME = "AI Practice::Generated"
 
+FIELDS = [
+    "Question",
+    "OptionA",
+    "OptionB",
+    "OptionC",
+    "OptionD",
+    "Answer",
+    "Explanation",
+    "Source",
+]
 
-def _get_or_create_note_type(col: Any) -> Any:
-    models = col.models
-    model = models.by_name(NOTE_TYPE_NAME)
-    if model is not None:
-        return model
-
-    model = models.new(NOTE_TYPE_NAME)
-    models.add_field(model, models.new_field("Question"))
-    models.add_field(model, models.new_field("OptionA"))
-    models.add_field(model, models.new_field("OptionB"))
-    models.add_field(model, models.new_field("OptionC"))
-    models.add_field(model, models.new_field("OptionD"))
-    models.add_field(model, models.new_field("Answer"))
-    models.add_field(model, models.new_field("Explanation"))
-    models.add_field(model, models.new_field("Source"))
-
-    template = models.new_template("Multiple Choice")
-    template["qfmt"] = """
-<div class="ai-practice-card">
+QFMT = """
+<div class="ai-practice-card" data-answer="{{text:Answer}}">
   <div class="question">{{Question}}</div>
   <div class="options">
-    <div class="option"><span class="label">A</span>{{OptionA}}</div>
-    <div class="option"><span class="label">B</span>{{OptionB}}</div>
-    <div class="option"><span class="label">C</span>{{OptionC}}</div>
-    <div class="option"><span class="label">D</span>{{OptionD}}</div>
+    <button type="button" class="option-button" data-value="{{text:OptionA}}" onclick="aiPracticeChoose(this)">
+      <span class="label">A</span><span class="option-text">{{OptionA}}</span>
+    </button>
+    <button type="button" class="option-button" data-value="{{text:OptionB}}" onclick="aiPracticeChoose(this)">
+      <span class="label">B</span><span class="option-text">{{OptionB}}</span>
+    </button>
+    <button type="button" class="option-button" data-value="{{text:OptionC}}" onclick="aiPracticeChoose(this)">
+      <span class="label">C</span><span class="option-text">{{OptionC}}</span>
+    </button>
+    <button type="button" class="option-button" data-value="{{text:OptionD}}" onclick="aiPracticeChoose(this)">
+      <span class="label">D</span><span class="option-text">{{OptionD}}</span>
+    </button>
   </div>
+  <div class="choice-result" aria-live="polite"></div>
 </div>
+
+<script>
+function aiPracticeEscapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function aiPracticeNormalize(text) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+function aiPracticeChoose(button) {
+  const card = button.closest(".ai-practice-card");
+  if (!card) return;
+
+  const answer = aiPracticeNormalize(card.dataset.answer);
+  const chosen = aiPracticeNormalize(button.dataset.value);
+  const result = card.querySelector(".choice-result");
+  const buttons = card.querySelectorAll(".option-button");
+
+  buttons.forEach((btn) => {
+    const value = aiPracticeNormalize(btn.dataset.value);
+    btn.disabled = true;
+    btn.classList.remove("selected", "correct", "wrong");
+    if (value === answer) {
+      btn.classList.add("correct");
+    }
+  });
+
+  button.classList.add("selected");
+
+  if (chosen === answer) {
+    result.innerHTML = "✅ Correct";
+    result.className = "choice-result result-correct";
+  } else {
+    button.classList.add("wrong");
+    result.innerHTML = "❌ Incorrect. Correct answer: <b>" + aiPracticeEscapeHtml(answer) + "</b>";
+    result.className = "choice-result result-wrong";
+  }
+}
+</script>
 """.strip()
-    template["afmt"] = """
+
+AFMT = """
 {{FrontSide}}
 <hr id="answer">
 <div class="answer"><b>Answer:</b> {{Answer}}</div>
 <div class="explanation"><b>Explanation:</b> {{Explanation}}</div>
 <div class="source"><b>Source:</b><br>{{Source}}</div>
 """.strip()
-    models.add_template(model, template)
 
-    model["css"] = """
+CSS = """
 .card {
   font-family: Arial, sans-serif;
   font-size: 18px;
@@ -59,10 +106,31 @@ def _get_or_create_note_type(col: Any) -> Any:
   display: grid;
   gap: 10px;
 }
-.option {
+.option-button {
+  width: 100%;
   border: 1px solid #ddd;
   border-radius: 8px;
   padding: 10px 12px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.option-button:hover:not(:disabled) {
+  border-color: #999;
+  background: #f7f7f7;
+}
+.option-button:disabled {
+  cursor: default;
+}
+.option-button.correct {
+  border-color: #2e7d32;
+  background: #e8f5e9;
+}
+.option-button.wrong {
+  border-color: #c62828;
+  background: #ffebee;
 }
 .label {
   display: inline-block;
@@ -75,6 +143,18 @@ def _get_or_create_note_type(col: Any) -> Any:
   margin-right: 10px;
   font-weight: bold;
 }
+.choice-result {
+  min-height: 28px;
+  margin-top: 16px;
+  font-size: 20px;
+  font-weight: bold;
+}
+.result-correct {
+  color: #2e7d32;
+}
+.result-wrong {
+  color: #c62828;
+}
 .answer {
   margin-top: 16px;
   font-size: 20px;
@@ -85,6 +165,37 @@ def _get_or_create_note_type(col: Any) -> Any:
 }
 """.strip()
 
+
+def _ensure_fields(models: Any, model: Any) -> None:
+    existing = {field["name"] for field in model.get("flds", [])}
+    for field_name in FIELDS:
+        if field_name not in existing:
+            models.add_field(model, models.new_field(field_name))
+
+
+def _ensure_template(models: Any, model: Any) -> None:
+    templates = model.get("tmpls", [])
+    if templates:
+        template = templates[0]
+        template["name"] = "Interactive Multiple Choice"
+        template["qfmt"] = QFMT
+        template["afmt"] = AFMT
+    else:
+        template = models.new_template("Interactive Multiple Choice")
+        template["qfmt"] = QFMT
+        template["afmt"] = AFMT
+        models.add_template(model, template)
+
+
+def _get_or_create_note_type(col: Any) -> Any:
+    models = col.models
+    model = models.by_name(NOTE_TYPE_NAME)
+    if model is None:
+        model = models.new(NOTE_TYPE_NAME)
+
+    _ensure_fields(models, model)
+    _ensure_template(models, model)
+    model["css"] = CSS
     models.save(model)
     return model
 
@@ -101,10 +212,8 @@ def _source_summary(source_notes: list[Any]) -> str:
 
 def _normalized_options(raw_options: list[Any], answer: str) -> list[str]:
     options = [str(option).strip() for option in raw_options if str(option).strip()]
-    # Ensure the answer is present.
     if answer and answer not in options:
         options.insert(0, answer)
-    # Pad defensively; prompt asks for exactly 4 but model may fail.
     while len(options) < 4:
         options.append("")
     return options[:4]
@@ -116,7 +225,7 @@ def save_practice_as_cards(
     source_notes: list[Any],
     deck_name: str = DEFAULT_DECK_NAME,
 ) -> int:
-    """Persist generated multiple-choice practice questions as real Anki cards."""
+    """Persist generated interactive multiple-choice practice questions as real Anki cards."""
     col = mw.col
     deck_id = col.decks.id(deck_name)
     model = _get_or_create_note_type(col)
