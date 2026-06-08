@@ -17,6 +17,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "max_notes": 30,
     "save_deck_name": "AI Practice::Generated",
 
+    # Knowledge graph settings.
+    "graph_max_notes": 5000,
+    "graph_top_k": 5,
+    "graph_term_fields": "英语单词,Front,正面,Expression,Term,单词,词条",
+    "graph_meaning_fields": "中文释义,Meaning,Back,背面,释义,答案",
+    "graph_example_fields": "英语例句,Example,Examples,Sentence,例句",
+
     # Local-first settings.
     "local_example_source": "example_field",
     "local_example_fields": "英语例句,Example,Examples,Sentence,例句",
@@ -112,6 +119,8 @@ def get_config_summary(window: Any = None) -> str:
             f"question_type: {config.get('question_type')}",
             f"question_language: {config.get('question_language')}",
             f"explanation_language: {config.get('explanation_language')}",
+            f"graph_max_notes: {config.get('graph_max_notes')}",
+            f"graph_top_k: {config.get('graph_top_k')}",
             f"local_example_source: {config.get('local_example_source')}",
             f"base_url: {config.get('base_url')}",
             f"model: {config.get('model')}",
