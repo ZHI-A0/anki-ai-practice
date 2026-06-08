@@ -64,10 +64,28 @@ def _field_allowed(name: str, value: str, preferred_fields: list[str], ignored_k
 
 
 def compact_notes_for_llm(notes: list[SourceNote], config: dict[str, Any]) -> str:
-    preferred_fields = list(config.get("preferred_fields") or DEFAULT_PREFERRED_FIELDS)
-    ignored_keywords = list(config.get("ignored_field_keywords") or DEFAULT_IGNORED_FIELD_KEYWORDS)
+    source_mode = str(config.get("source_mode") or "front").lower()
     max_field_chars = int(config.get("max_field_chars") or 280)
     max_total_chars = int(config.get("max_total_chars") or 12000)
+
+    if source_mode == "front":
+        chunks: list[str] = []
+        used_chars = 0
+        for index, note in enumerate(notes, start=1):
+            text = clean_field_text(note.front_text or note.first_field_text())
+            if not text:
+                continue
+            if len(text) > max_field_chars:
+                text = text[:max_field_chars].rstrip() + "..."
+            chunk = f"Item {index}: {text}"
+            if used_chars + len(chunk) > max_total_chars:
+                break
+            chunks.append(chunk)
+            used_chars += len(chunk)
+        return "\n".join(chunks)
+
+    preferred_fields = list(config.get("preferred_fields") or DEFAULT_PREFERRED_FIELDS)
+    ignored_keywords = list(config.get("ignored_field_keywords") or DEFAULT_IGNORED_FIELD_KEYWORDS)
 
     note_chunks: list[str] = []
     used_chars = 0
