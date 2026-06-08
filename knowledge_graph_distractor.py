@@ -1,59 +1,204 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Set, Tuple
+import random
+import re
+from dataclasses import dataclass
+from typing import Any
 
-class KnowledgeGraph:
-    def __init__(self):
-        # 存储单词节点及其邻居
-        self.graph: Dict[str, Set[str]] = {}
-        # 可以存储词性信息等
-        self.pos_info: Dict[str, str] = {}
+from .source_compactor import clean_field_text
 
-    def add_node(self, word: str, pos: str = None) -> None:
-        word_lower = word.lower()
-        if word_lower not in self.graph:
-            self.graph[word_lower] = set()
-        if pos:
-            self.pos_info[word_lower] = pos
+_WORD_RE = re.compile(r"[A-Za-z][A-Za-z\-']*|[\u4e00-\u9fff]+")
 
-    def add_edge(self, word1: str, word2: str) -> None:
-        w1 = word1.lower()
-        w2 = word2.lower()
-        if w1 not in self.graph:
-            self.graph[w1] = set()
-        if w2 not in self.graph:
-            self.graph[w2] = set()
-        self.graph[w1].add(w2)
-        self.graph[w2].add(w1)
+COMMON_FRONT_FIELDS = [
+    "Front",
+    "正面",
+    "Question",
+    "问题",
+    "Prompt",
+    "提示",
+    "英语单词",
+    "单词",
+    "词条",
+    "Expression",
+    "Term",
+]
 
-    def get_neighbors(self, word: str) -> List[str]:
-        return list(self.graph.get(word.lower(), []))
 
-    def select_distractors(self, target: str, num: int = 3) -> List[str]:
-        target_lower = target.lower()
-        neighbors = self.graph.get(target_lower, set())
-        distractors: List[str] = []
-        used: Set[str] = {target_lower}
+def _normalize(text: str) -> str:
+    return clean_field_text(text).strip().lower()
 
-        for neighbor in neighbors:
-            # 避免同词根的动词/形容词形式，可以通过 pos_info 或简单规则过滤
-            if neighbor in used:
+
+def _tokens(text: str) -> set[str]:
+    return {token.lower() for token in _WORD_RE.findall(clean_field_text(text)) if len(token.strip()) > 1}
+
+
+def _rough_stem(word: str) -> str:
+    w = word.lower().strip()
+    for suffix in (
+        "ingly",
+        "edly",
+        "ing",
+        "ed",
+        "ly",
+        "ies",
+        "es",
+        "s",
+        "er",
+        "est",
+        "tion",
+        "ion",
+        "able",
+        "ible",
+        "al",
+        "ive",
+        "ous",
+        "ful",
+        "less",
+        "ment",
+    ):
+        if len(w) > len(suffix) + 3 and w.endswith(suffix):
+            return w[: -len(suffix)]
+    return w
+
+
+def _looks_like_inflection(a: str, b: str) -> bool:
+    a_norm = _normalize(a)
+    b_norm = _normalize(b)
+    if not a_norm or not b_norm:
+        return False
+    if a_norm == b_norm:
+        return True
+    a_stem = _rough_stem(a_norm)
+    b_stem = _rough_stem(b_norm)
+    if len(a_stem) >= 4 and len(b_stem) >= 4 and a_stem == b_stem:
+        return True
+    shorter, longer = sorted((a_norm, b_norm), key=len)
+    return len(shorter) >= 4 and longer.startswith(shorter) and len(longer) - len(shorter) <= 5
+
+
+@dataclass(slots=True)
+class ConceptNode:
+    term: str
+    note_id: int
+    text: str
+    tokens: set[str]
+
+
+class SourceKnowledgeGraph:
+    """A lightweight graph built only from selected/source notes."""
+
+    def __init__(self, nodes: list[ConceptNode]) -> None:
+        self.nodes = nodes
+        self.by_norm = {_normalize(node.term): node for node in nodes}
+
+    @classmethod
+    def from_notes(cls, notes: list[Any]) -> "SourceKnowledgeGraph":
+        nodes: list[ConceptNode] = []
+        seen: set[str] = set()
+        for note in notes:
+            term = _extract_term(note)
+            norm = _normalize(term)
+            if not norm or norm in seen:
                 continue
-            if self.pos_info.get(neighbor) and self.pos_info.get(neighbor) == self.pos_info.get(target_lower):
-                # 同词性且为变形可排除，简单过滤
+            seen.add(norm)
+            full_text = "\n".join(clean_field_text(value) for value in note.fields.values() if value)
+            nodes.append(
+                ConceptNode(
+                    term=term,
+                    note_id=int(getattr(note, "note_id", 0)),
+                    text=full_text,
+                    tokens=_tokens(full_text),
+                )
+            )
+        return cls(nodes)
+
+    def contains(self, term: str) -> bool:
+        return _normalize(term) in self.by_norm
+
+    def canonical_term(self, term: str) -> str:
+        node = self.by_norm.get(_normalize(term))
+        return node.term if node else term
+
+    def distractors_for(self, answer: str, count: int = 3) -> list[str]:
+        answer_norm = _normalize(answer)
+        target = self.by_norm.get(answer_norm)
+        if not target:
+            return []
+
+        candidates: list[tuple[float, str]] = []
+        for node in self.nodes:
+            term_norm = _normalize(node.term)
+            if term_norm == answer_norm:
                 continue
-            distractors.append(neighbor)
-            used.add(neighbor)
-            if len(distractors) >= num:
+            if _looks_like_inflection(answer, node.term):
+                continue
+            score = _similarity_score(target, node)
+            candidates.append((score, node.term))
+
+        candidates.sort(key=lambda item: (-item[0], item[1].lower()))
+        selected: list[str] = []
+        seen: set[str] = {answer_norm}
+        for _, term in candidates:
+            norm = _normalize(term)
+            if norm in seen:
+                continue
+            selected.append(term)
+            seen.add(norm)
+            if len(selected) >= count:
                 break
+        return selected
 
-        # 补齐不足
-        if len(distractors) < num:
-            for word in self.graph.keys():
-                if word not in used:
-                    distractors.append(word)
-                    used.add(word)
-                if len(distractors) >= num:
-                    break
 
-        return distractors[:num]
+def _extract_term(note: Any) -> str:
+    for field_name in COMMON_FRONT_FIELDS:
+        if field_name in note.fields:
+            value = clean_field_text(note.fields[field_name])
+            if value:
+                return value
+
+    front_text = clean_field_text(getattr(note, "front_text", ""))
+    if front_text:
+        match = _WORD_RE.search(front_text)
+        return match.group(0) if match else front_text
+
+    for value in note.fields.values():
+        cleaned = clean_field_text(value)
+        if cleaned:
+            return cleaned
+    return ""
+
+
+def _similarity_score(a: ConceptNode, b: ConceptNode) -> float:
+    if not a.tokens or not b.tokens:
+        return 0.0
+    overlap = len(a.tokens & b.tokens)
+    union = len(a.tokens | b.tokens)
+    jaccard = overlap / union if union else 0.0
+    length_score = 1.0 / (1.0 + abs(len(a.term) - len(b.term)))
+    return jaccard * 3.0 + length_score * 0.25
+
+
+def apply_source_graph_options(result: dict[str, Any], source_notes: list[Any]) -> dict[str, Any]:
+    """Replace model options with source-graph options when possible.
+
+    The model still writes question stems/explanations. The final choices are
+    constrained to the selected/source note pool.
+    """
+    graph = SourceKnowledgeGraph.from_notes(source_notes)
+    questions = result.get("questions") or []
+    if not graph.nodes or not questions:
+        return result
+
+    for item in questions:
+        answer = str(item.get("answer") or "").strip()
+        if not graph.contains(answer):
+            continue
+        canonical_answer = graph.canonical_term(answer)
+        distractors = graph.distractors_for(canonical_answer, 3)
+        if len(distractors) < 3:
+            continue
+        options = [canonical_answer, *distractors[:3]]
+        random.shuffle(options)
+        item["answer"] = canonical_answer
+        item["options"] = options
+    return result
