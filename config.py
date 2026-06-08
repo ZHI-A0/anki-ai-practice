@@ -15,6 +15,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "question_language": "source",
     "explanation_language": "zh-CN",
     "max_notes": 30,
+    "recent_reviewed_limit": 30,
+    "recent_reviewed_scan_cards": 300,
     "save_deck_name": "AI Practice::Generated",
 
     # Knowledge graph settings.
@@ -121,6 +123,7 @@ def get_config_summary(window: Any = None) -> str:
             f"question_type: {config.get('question_type')}",
             f"question_language: {config.get('question_language')}",
             f"explanation_language: {config.get('explanation_language')}",
+            f"recent_reviewed_limit: {config.get('recent_reviewed_limit')}",
             f"graph_max_notes: {config.get('graph_max_notes')}",
             f"graph_top_k: {config.get('graph_top_k')}",
             f"local_option_source: {config.get('local_option_source')}",
