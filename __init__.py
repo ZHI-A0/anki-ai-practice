@@ -12,9 +12,9 @@ from aqt import gui_hooks, mw
 from aqt.qt import QAction, qconnect
 from aqt.utils import showInfo, showWarning
 
-from .config import get_config_summary
 from .note_selector import collect_notes_from_browser, collect_selected_notes
 from .practice_dialog import PracticeDialog
+from .settings_dialog import SettingsDialog
 
 
 def _open_practice_dialog(parent: Any, notes: list[Any]) -> None:
@@ -55,17 +55,9 @@ def _show_save_as_cards_placeholder() -> None:
     )
 
 
-def _show_settings_help() -> None:
-    summary = get_config_summary(mw)
-    showInfo(
-        "AI Practice settings\n\n"
-        f"{summary}\n\n"
-        "Configure this add-on from Tools → Add-ons → AI Practice → Config.\n\n"
-        "Use an OpenAI-compatible endpoint. For example:\n"
-        "base_url: https://api.openai.com/v1\n"
-        "model: gpt-4o-mini\n\n"
-        "Your API key is stored in Anki's local add-on config."
-    )
+def _open_settings() -> None:
+    dialog = SettingsDialog(mw)
+    dialog.exec()
 
 
 def _setup_main_menu() -> None:
@@ -88,8 +80,8 @@ def _setup_main_menu() -> None:
 
     menu.addSeparator()
 
-    settings_action = QAction("Settings Help", mw)
-    qconnect(settings_action.triggered, _show_settings_help)
+    settings_action = QAction("Settings", mw)
+    qconnect(settings_action.triggered, _open_settings)
     menu.addAction(settings_action)
 
 
