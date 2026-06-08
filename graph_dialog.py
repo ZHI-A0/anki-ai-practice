@@ -131,7 +131,6 @@ class GraphCanvas(QGraphicsView):
             super().mousePressEvent(event)
             return
 
-        # Background, title, lines, and empty areas all rotate the graph.
         self._rotating = True
         self._last_mouse = pos
         try:
@@ -206,7 +205,6 @@ class GraphCanvas(QGraphicsView):
                 "first",
                 score_norm,
             )
-            # Force the displayed first-hop relationship to be drawn.
             visible_edges.append((center_id, node_id, score_norm))
 
         second_budget = 58
@@ -242,7 +240,6 @@ class GraphCanvas(QGraphicsView):
                     "second",
                     child_score_norm,
                 )
-                # Force the displayed second-hop parent relationship to be drawn.
                 visible_edges.append((parent_id, child_id, child_score_norm))
                 second_count += 1
                 if second_count >= second_budget:
@@ -268,18 +265,15 @@ class GraphCanvas(QGraphicsView):
             projected[node_id] = (sx, sy, rz, max(4.0, size * scale), layer, score)
 
         center_label = self.node_by_id.get(self.focus_id).term if self.focus_id in self.node_by_id else ""
-        self._draw_background(width, height, center_label)
+        self._draw_title(center_label)
         self._draw_projected_edges(projected)
         self._draw_projected_nodes(projected)
         self.scene.setSceneRect(0, 0, width, height)
         self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
-    def _draw_background(self, width: int, height: int, center_label: str) -> None:
-        background = self.scene.addRect(0, 0, width, height, QPen(QColor(230, 230, 230)), QBrush(QColor(250, 250, 250)))
-        background.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        background.setZValue(-1000)
+    def _draw_title(self, center_label: str) -> None:
         title = self.scene.addText(
-            f"3D Graph · Center: {center_label} · Drag background to rotate · Wheel to zoom · Click node to recenter"
+            f"3D Graph · Center: {center_label} · Drag blank area/lines to rotate · Wheel to zoom · Click node to recenter"
         )
         title.setDefaultTextColor(QColor(80, 80, 80))
         title.setPos(18, 12)
@@ -298,9 +292,9 @@ class GraphCanvas(QGraphicsView):
             x1, y1, z1, _, layer1, _ = projected[source_id]
             x2, y2, z2, _, layer2, _ = projected[target_id]
             avg_z = (z1 + z2) / 2
-            opacity = 65 + int(_clamp_score(score) * 160)
-            if avg_z < -200:
-                opacity = max(30, int(opacity * 0.55))
+            depth_front = _depth_frontness(avg_z)
+            opacity = int((80 + _clamp_score(score) * 145) * (1.0 - 0.38 * depth_front))
+            opacity = max(28, min(220, opacity))
             pen = QPen(QColor(120, 120, 120, opacity))
             pen.setWidth(3 if "center" in (layer1, layer2) else 1)
             line = self.scene.addLine(x1, y1, x2, y2, pen)
@@ -312,7 +306,8 @@ class GraphCanvas(QGraphicsView):
             node = self.node_by_id[node_id]
             tooltip = _node_tooltip(node, layer, self.graph_type, score)
             brush = _brush_for_layer(layer, z)
-            pen = QPen(QColor(255, 255, 255))
+            pen_alpha = 255 if layer == "center" else _alpha_for_depth(z, base=230, fade=95)
+            pen = QPen(QColor(255, 255, 255, pen_alpha))
             pen.setWidth(2 if layer == "center" else 1)
             ellipse = CenterNodeItem(self, node_id, radius, tooltip)
             ellipse.setBrush(brush)
@@ -323,7 +318,8 @@ class GraphCanvas(QGraphicsView):
 
             label = node.term[:28 if layer == "center" else 20]
             text = CenterTextItem(self, node_id, label, tooltip)
-            text.setDefaultTextColor(QColor(25, 25, 25) if layer != "second" else QColor(80, 80, 80))
+            label_alpha = 245 if layer == "center" else _alpha_for_depth(z, base=220, fade=80)
+            text.setDefaultTextColor(QColor(25, 25, 25, label_alpha) if layer != "second" else QColor(80, 80, 80, label_alpha))
             label_scale = 1.20 if layer == "center" else 0.92 if layer == "first" else 0.72
             if layer == "second" and radius < 7.8:
                 label_scale = 0.0
@@ -384,6 +380,16 @@ def _clamp_score(score: float) -> float:
     return max(0.0, min(1.0, float(score or 0.0)))
 
 
+def _depth_frontness(z: float) -> float:
+    """0 = far/back, 1 = close/front."""
+    return max(0.0, min(1.0, (z + 420.0) / 840.0))
+
+
+def _alpha_for_depth(z: float, base: int, fade: int) -> int:
+    # Closer-to-camera nodes are more transparent so they do not hide the center.
+    return max(85, min(255, int(base - fade * _depth_frontness(z))))
+
+
 def _build_undirected_adjacency(edges: list[GraphEdge]) -> dict[str, list[tuple[str, float]]]:
     best: dict[tuple[str, str], float] = {}
     for edge in edges:
@@ -402,12 +408,13 @@ def _build_undirected_adjacency(edges: list[GraphEdge]) -> dict[str, list[tuple[
 
 
 def _brush_for_layer(layer: str, z: float = 0.0) -> QBrush:
-    depth_boost = max(0, min(55, int((z + 300) / 12)))
+    # Distinct layers + depth alpha. Foreground nodes become more transparent.
     if layer == "center":
-        return QBrush(QColor(255, 170, 55))
+        return QBrush(QColor(255, 150, 35, 255))
+    alpha = _alpha_for_depth(z, base=235, fade=105)
     if layer == "first":
-        return QBrush(QColor(60 + depth_boost, 95 + depth_boost, 225))
-    return QBrush(QColor(120 + depth_boost, 160 + depth_boost, 245))
+        return QBrush(QColor(52, 105, 235, alpha))
+    return QBrush(QColor(40, 185, 150, alpha))
 
 
 def _node_tooltip(node: GraphNode, layer: str, graph_type: str, score: float = 1.0) -> str:
@@ -549,7 +556,7 @@ class GraphViewerDialog(QDialog):
         self.output = QTextBrowser()
         self.output.setHtml(
             "<h2>View Knowledge Graph</h2>"
-            "<p>Select a graph and click View Graph. Click a node to move it to the center. Drag background/lines to rotate. Wheel to zoom.</p>"
+            "<p>Select a graph and click View Graph. Click a node to move it to the center. Drag blank area/lines to rotate. Wheel to zoom.</p>"
         )
 
         splitter = QSplitter(Qt.Orientation.Vertical)
