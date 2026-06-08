@@ -4,7 +4,7 @@ from typing import Any
 
 from .config import get_config
 from .models import SourceNote
-from .source_compactor import clean_field_text
+from .source_compactor import DEFAULT_FRONT_FIELD_NAMES, clean_field_text, looks_like_css_noise
 
 
 def _active_browser(mw: Any) -> Any | None:
@@ -39,21 +39,19 @@ def _selected_note_ids(browser: Any) -> list[int]:
     return []
 
 
-def _front_text_for_note(note: Any) -> str:
-    """Return the text Anki would show on the first card's front side when possible."""
-    try:
-        cards = note.cards()
-        if cards:
-            question = cards[0].question()
-            cleaned = clean_field_text(question)
-            if cleaned:
-                return cleaned
-    except Exception:
-        pass
+def _front_field_text_for_note(note: Any) -> str:
+    # Prefer common front-side field names. This avoids rendered-card CSS/template noise.
+    keys = list(note.keys())
+    for preferred in DEFAULT_FRONT_FIELD_NAMES:
+        if preferred in keys:
+            value = clean_field_text(note[preferred])
+            if value and not looks_like_css_noise(value):
+                return value
 
-    for field_name in note.keys():
+    # Fallback to the first clean field value.
+    for field_name in keys:
         value = clean_field_text(note[field_name])
-        if value:
+        if value and not looks_like_css_noise(value):
             return value
     return ""
 
@@ -83,7 +81,7 @@ def collect_notes_from_browser(browser: Any) -> list[SourceNote]:
                 deck_name=deck_name,
                 fields=fields,
                 tags=list(note.tags),
-                front_text=_front_text_for_note(note),
+                front_text=_front_field_text_for_note(note),
             )
         )
 
