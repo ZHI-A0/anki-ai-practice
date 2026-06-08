@@ -6,13 +6,14 @@ The first MVP focuses on this workflow:
 
 1. Open Anki's **Browse** window.
 2. Select notes/cards you want to practice.
-3. Run **Tools → AI Practice → Generate from Selected Notes**.
+3. Right-click the selection and choose **AI Practice: Generate from Selection**.
 4. Choose a question type.
 5. Generate cloze or Q&A practice using an OpenAI-compatible API.
 
 ## Features
 
-- Adds an **AI Practice** menu under Anki's Tools menu.
+- Adds an **AI Practice** context-menu item in Anki's Browse window.
+- Also adds a global **AI Practice** menu under Anki's main Tools menu.
 - Reads selected notes from Anki's Browser.
 - Supports OpenAI-compatible `/chat/completions` endpoints.
 - Generates either:
@@ -51,6 +52,22 @@ addons21/anki_ai_practice/__init__.py
 addons21/anki_ai_practice/config.json
 ```
 
+## Usage
+
+Recommended MVP workflow:
+
+```text
+Browse → select notes/cards → right-click → AI Practice: Generate from Selection
+```
+
+The main Anki window also has:
+
+```text
+Tools → AI Practice → Generate from Active Browser Selection
+```
+
+The main-window menu is kept for later global workflows, such as generating practice from recently reviewed cards.
+
 ## Configuration
 
 In Anki, open:
@@ -79,7 +96,7 @@ For other providers, use an OpenAI-compatible endpoint and set `base_url` and `m
 
 Main files:
 
-- `__init__.py` registers the menu actions.
+- `__init__.py` registers the menu actions and Browser context menu item.
 - `note_selector.py` reads selected Browser notes.
 - `prompt_builder.py` builds the LLM prompt.
 - `llm_client.py` calls an OpenAI-compatible API.
