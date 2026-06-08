@@ -20,64 +20,21 @@
 
 Local-first 模式不会调用大模型 API。它主要依赖你牌组内已有字段和本地知识图谱生成练习。
 
-适合：
-
-- 英语单词填空
-- 概念辨析
-- 根据已有例句挖空
-- 不想消耗 API token 的场景
-
 Local-first 会优先使用已经构建好的本地图谱，从图谱中选择与正确答案最相似的 3 个节点作为混淆项。
 
 ### 3. LLM-first 大模型优先模式
 
 LLM-first 模式会调用 OpenAI-compatible API，让大模型根据笔记内容生成题干、解释或问答。
 
-适合：
-
-- 需要更自然的题干
-- 需要根据知识点生成开放式问题
-- 需要更详细解释
-- 不局限于词汇场景的知识卡片
-
-配置中可以设置：
-
-- Base URL
-- API Key
-- Model
-- Temperature
-- 调用模式
-
 ### 4. 双知识图谱
 
 插件现在会为牌组构建两种本地图谱：
-
-#### Spelling Graph / 拼写图
-
-基于英文词条本身计算相似度。当前主要参考：
-
-- 字符 2-gram 重合度
-- 字符 3-gram 重合度
-- 单词长度相近度
-- 前缀相似度
-
-它更适合做词形辨析、拼写相近干扰项、英文填空题。
-
-#### Meaning Graph / 释义图
-
-基于释义字段计算相似度。当前主要参考：
-
-- 中文释义 / 英文释义中的 token overlap
-- 字符 2-gram 重合度
-
-它更适合做语义相近干扰项，例如近义词、相关概念辨析。
-
-注意：当前 meaning graph 仍是轻量本地算法，不是 embedding 语义向量。如果后续接入 embedding 模型，语义相似度会更准确。
+- Spelling graph / 拼写图
+- Meaning graph / 释义图
 
 ### 5. 图谱可视化
 
-插件提供一个 3D-like 的图谱查看器：
-
+提供 3D-like 的图谱查看器：
 - 点击节点：切换中心节点
 - 拖动画布空白处或连线：旋转图谱
 - 鼠标滚轮：缩放
@@ -86,180 +43,42 @@ LLM-first 模式会调用 OpenAI-compatible API，让大模型根据笔记内容
 - 节点远近根据当前邻居集合中的相对相似度决定
 - 节点之间有最小间隔，避免完全重叠
 
-图谱查看入口：
+### 6. 从最近复习卡片生成练习
 
+新增菜单入口：
 ```text
-Tools → AI Practice → View Knowledge Graph
+Tools → AI Practice → Generate from Recently Reviewed
 ```
+插件会读取最近复习的卡片对应的 notes 并生成练习题。
+
+### 7. 保存生成的练习为 Anki 卡片
+
+新增菜单入口：
+```text
+Tools → AI Practice → Save Generated Practice as Cards
+```
+可以把最近一次生成的练习题保存成新的 Anki 牌组/笔记。
 
 ## 安装方式
 
-### 开发安装
-
-进入 Anki 的 add-ons 目录，把仓库 clone 到 `addons21` 下。
-
-Windows 常见路径：
-
-```text
-C:\Users\你的用户名\AppData\Roaming\Anki2\addons21
-```
-
-然后执行：
-
-```bash
-git clone https://github.com/ZHI-A0/anki-ai-practice.git
-```
-
-重启 Anki。
-
-### 更新插件
-
-如果已经 clone 过，进入插件目录：
-
-```bash
-cd C:\Users\你的用户名\AppData\Roaming\Anki2\addons21\anki-ai-practice
-git pull
-```
-
-然后重启 Anki。
+- 将插件 clone 到 `addons21` 目录
+- 重启 Anki
 
 ## 使用流程
 
-### 1. 构建知识图谱
+1. 构建知识图谱
+2. 查看知识图谱
+3. 从 Browse 或最近复习生成练习
+4. 使用新菜单保存练习为正式卡片
 
-先为你的牌组构建图谱：
+## 配置
 
-```text
-Tools → AI Practice → Build Knowledge Graph
-```
-
-选择一个牌组，然后点击：
-
-```text
-Build Dual Graphs from Deck
-```
-
-插件会扫描该牌组，生成：
-
-- spelling graph
-- meaning graph
-
-图谱文件会保存到本地：
-
-```text
-C:\Users\你的用户名\.anki_ai_practice_graphs
-```
-
-### 2. 查看知识图谱
-
-打开：
-
-```text
-Tools → AI Practice → View Knowledge Graph
-```
-
-选择牌组和图谱类型：
-
-- Spelling graph
-- Meaning graph
-
-然后点击 `View Graph`。
-
-### 3. 从 Browse 中生成练习
-
-打开 Anki 的 Browse / 浏览 页面。
-
-选中一些笔记或卡片。
-
-右键菜单：
-
-```text
-AI Practice: Generate from Selection
-```
-
-然后在弹出的练习窗口中点击生成。
-
-在 Local-first 模式下，插件会优先使用本地图谱，选择相似度最高的 3 个节点作为混淆项。
-
-### 4. 设置
-
-入口：
-
-```text
-Tools → AI Practice → Settings
-```
-
-当前可以配置：
-
+可通过 `Tools → AI Practice → Settings` 配置：
 - 生成模式：local-first / llm-first
 - 图谱字段
-- 题干字段
-- 答案字段
-- 解释字段
-- 本地选项来源
-- 使用 spelling graph 还是 meaning graph
-- OpenAI-compatible API 配置
-
-## 推荐配置示例：六级英语单词
-
-如果你的笔记字段类似：
-
-```text
-英语单词
-中文释义
-英语例句
-中文例句
-```
-
-可以使用默认配置。
-
-推荐流程：
-
-1. 先构建整个六级词汇牌组的知识图谱。
-2. 做英文填空题时使用 spelling graph。
-3. 做词义辨析题时使用 meaning graph。
-4. 解释中包含中文释义和中文例句。
-
-## 当前状态
-
-这个插件仍处于开发阶段，功能正在快速变化。
-
-已经实现：
-
-- Browse 右键生成练习
-- 主菜单 AI Practice 入口
-- Local-first 生成
-- LLM-first 生成
-- OpenAI-compatible API 配置
-- 双图谱构建
-- 本地图谱保存
-- 3D-like 图谱查看器
-- 基于图谱相似度选择混淆项
-
-仍在改进：
-
-- 真正的 WebGL/three.js 3D 图谱
-- embedding 语义图谱
-- 更完善的设置页面
-- 将生成练习保存成正式 Anki notes/cards
-- 最近复习卡片自动读取
-- 建图进度条和异步构建
-
-## 技术说明
-
-Anki 插件主要使用：
-
-- Python
-- Anki add-on API
-- Qt / PyQt
-- 本地 JSON 图谱存储
-- OpenAI-compatible chat completions API，可选
-
-本地知识图谱目前存储在用户目录下：
-
-```text
-~/.anki_ai_practice_graphs
-```
+- 题干/答案/解释字段
+- 最近复习扫描量和生成数量限制
+- LLM API 配置
 
 ## License
 
