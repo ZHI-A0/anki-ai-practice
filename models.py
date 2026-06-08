@@ -10,16 +10,10 @@ class SourceNote:
     deck_name: str
     fields: dict[str, str]
     tags: list[str]
+    front_text: str = ""
 
-    def compact_text(self) -> str:
-        field_lines = [f"{name}: {value}" for name, value in self.fields.items() if value.strip()]
-        tags = " ".join(self.tags)
-        return "\n".join(
-            [
-                f"Note ID: {self.note_id}",
-                f"Model: {self.model_name}",
-                f"Deck: {self.deck_name}",
-                f"Tags: {tags}",
-                *field_lines,
-            ]
-        ).strip()
+    def first_field_text(self) -> str:
+        for value in self.fields.values():
+            if value.strip():
+                return value
+        return ""
