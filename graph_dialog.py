@@ -43,8 +43,13 @@ class CenterNodeItem(QGraphicsEllipseItem):
         self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
 
     def mousePressEvent(self, event: Any) -> None:  # pragma: no cover - Qt callback
+        # focus_node() clears and rebuilds the scene, which deletes this item.
+        # Do not call super() after that, or Qt may access a deleted C++ object.
+        try:
+            event.accept()
+        except Exception:
+            pass
         self.canvas.focus_node(self.node_id)
-        super().mousePressEvent(event)
 
 
 class CenterTextItem(QGraphicsTextItem):
@@ -58,8 +63,13 @@ class CenterTextItem(QGraphicsTextItem):
         self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
 
     def mousePressEvent(self, event: Any) -> None:  # pragma: no cover - Qt callback
+        # focus_node() clears and rebuilds the scene, which deletes this item.
+        # Do not call super() after that, or Qt may access a deleted C++ object.
+        try:
+            event.accept()
+        except Exception:
+            pass
         self.canvas.focus_node(self.node_id)
-        super().mousePressEvent(event)
 
 
 class GraphCanvas(QGraphicsView):
