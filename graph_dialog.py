@@ -32,6 +32,7 @@ from .graph_store import GRAPH_STORAGE_DIR, load_graph, save_graph
 from .note_selector import collect_selected_notes
 
 VisibleEdge = tuple[str, str, float]
+LayoutValue = tuple[float, float, float, float, str, float]
 
 
 class CenterNodeItem(QGraphicsEllipseItem):
@@ -43,7 +44,7 @@ class CenterNodeItem(QGraphicsEllipseItem):
         self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
 
-    def mousePressEvent(self, event: Any) -> None:  # pragma: no cover - Qt callback
+    def mousePressEvent(self, event: Any) -> None:  # pragma: no cover
         try:
             event.accept()
         except Exception:
@@ -60,7 +61,7 @@ class CenterTextItem(QGraphicsTextItem):
         self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
 
-    def mousePressEvent(self, event: Any) -> None:  # pragma: no cover - Qt callback
+    def mousePressEvent(self, event: Any) -> None:  # pragma: no cover
         try:
             event.accept()
         except Exception:
@@ -71,10 +72,9 @@ class CenterTextItem(QGraphicsTextItem):
 class GraphCanvas(QGraphicsView):
     """Pseudo-3D center-focused graph canvas.
 
-    - Click node: make it the center.
-    - Drag blank area/lines: rotate the graph.
-    - Mouse wheel: zoom.
-    - Relative similarity controls distance and node size.
+    Click node to recenter. Drag blank area or edges to rotate. Wheel to zoom.
+    Distance is controlled by relative similarity, with minimum clearance to
+    avoid overlapping nodes.
     """
 
     def __init__(self, parent: Any = None) -> None:
@@ -95,7 +95,7 @@ class GraphCanvas(QGraphicsView):
         self.zoom = 1.0
         self._rotating = False
         self._last_mouse: tuple[float, float] | None = None
-        self._layout3d: dict[str, tuple[float, float, float, float, str, float]] = {}
+        self._layout3d: dict[str, LayoutValue] = {}
         self._visible_edges: list[VisibleEdge] = []
 
     def set_graph(self, manager: LocalGraphManager, graph_type: str) -> None:
@@ -119,18 +119,15 @@ class GraphCanvas(QGraphicsView):
         if self.on_focus:
             self.on_focus(node_id, self.graph_type)
 
-    def mousePressEvent(self, event: Any) -> None:  # pragma: no cover - Qt callback
+    def mousePressEvent(self, event: Any) -> None:  # pragma: no cover
         pos = _event_xy(event)
-        item = None
         try:
             item = self.itemAt(int(pos[0]), int(pos[1]))
         except Exception:
             item = None
-
         if isinstance(item, (CenterNodeItem, CenterTextItem)):
             super().mousePressEvent(event)
             return
-
         self._rotating = True
         self._last_mouse = pos
         try:
@@ -138,7 +135,7 @@ class GraphCanvas(QGraphicsView):
         except Exception:
             pass
 
-    def mouseMoveEvent(self, event: Any) -> None:  # pragma: no cover - Qt callback
+    def mouseMoveEvent(self, event: Any) -> None:  # pragma: no cover
         if self._rotating and self._last_mouse:
             x, y = _event_xy(event)
             last_x, last_y = self._last_mouse
@@ -154,7 +151,7 @@ class GraphCanvas(QGraphicsView):
             return
         super().mouseMoveEvent(event)
 
-    def mouseReleaseEvent(self, event: Any) -> None:  # pragma: no cover - Qt callback
+    def mouseReleaseEvent(self, event: Any) -> None:  # pragma: no cover
         self._rotating = False
         self._last_mouse = None
         try:
@@ -162,7 +159,7 @@ class GraphCanvas(QGraphicsView):
         except Exception:
             pass
 
-    def wheelEvent(self, event: Any) -> None:  # pragma: no cover - Qt callback
+    def wheelEvent(self, event: Any) -> None:  # pragma: no cover
         try:
             delta = event.angleDelta().y()
         except Exception:
@@ -178,18 +175,17 @@ class GraphCanvas(QGraphicsView):
         except Exception:
             pass
 
-    def _build_similarity_layout(
-        self, center_id: str
-    ) -> tuple[dict[str, tuple[float, float, float, float, str, float]], list[VisibleEdge]]:
-        layout: dict[str, tuple[float, float, float, float, str, float]] = {
-            center_id: (0.0, 0.0, 0.0, 38.0, "center", 1.0)
-        }
+    def _build_similarity_layout(self, center_id: str) -> tuple[dict[str, LayoutValue], list[VisibleEdge]]:
+        center_radius = 38.0
+        min_gap = 22.0  # at least about one small-node diameter between linked nodes
+        layout: dict[str, LayoutValue] = {center_id: (0.0, 0.0, 0.0, center_radius, "center", 1.0)}
         visible_edges: list[VisibleEdge] = []
+
         first_neighbors = [item for item in self.adjacency.get(center_id, [])[:22] if item[0] in self.node_by_id]
         first_relative_scores = _relative_scores([score for _, score in first_neighbors])
+        first_dirs = _fibonacci_sphere(len(first_neighbors), phase=0.31)
         seen = {center_id}
 
-        first_dirs = _fibonacci_sphere(len(first_neighbors), phase=0.31)
         for index, (node_id, raw_score) in enumerate(first_neighbors):
             if node_id in seen:
                 continue
@@ -197,15 +193,15 @@ class GraphCanvas(QGraphicsView):
             direction = first_dirs[index]
             relative_score = first_relative_scores[index]
             raw_score_norm = _clamp_score(raw_score)
-            # Relative similarity drives distance. This makes local differences
-            # visually obvious even if raw graph scores are tightly clustered.
-            distance = 72.0 + (1.0 - relative_score) * 455.0
-            size = 13.0 + relative_score * 24.0
+            node_radius = 13.0 + relative_score * 24.0
+            min_distance = center_radius + node_radius + min_gap
+            similarity_distance = 72.0 + (1.0 - relative_score) * 455.0
+            distance = max(min_distance, similarity_distance)
             layout[node_id] = (
                 direction[0] * distance,
                 direction[1] * distance,
                 direction[2] * distance,
-                size,
+                node_radius,
                 "first",
                 raw_score_norm,
             )
@@ -216,17 +212,20 @@ class GraphCanvas(QGraphicsView):
         for parent_index, (parent_id, _) in enumerate(first_neighbors):
             if parent_id not in layout:
                 continue
-            px, py, pz, _, _, _ = layout[parent_id]
+            px, py, pz, parent_radius, _, _ = layout[parent_id]
             parent_vec = _normalize3((px, py, pz))
+            parent_distance = math.sqrt(px * px + py * py + pz * pz)
             candidates = [item for item in self.adjacency.get(parent_id, [])[:8] if item[0] in self.node_by_id]
             candidate_relative_scores = _relative_scores([score for _, score in candidates])
             local_dirs = _fibonacci_sphere(len(candidates), phase=0.17 + parent_index * 0.07)
+
             for candidate_index, (child_id, child_raw_score) in enumerate(candidates):
                 if child_id in seen:
                     continue
                 seen.add(child_id)
                 child_relative_score = candidate_relative_scores[candidate_index]
                 child_raw_score_norm = _clamp_score(child_raw_score)
+                child_radius = 6.5 + child_relative_score * 12.0
                 local_dir = local_dirs[candidate_index]
                 mixed = _normalize3(
                     (
@@ -235,16 +234,14 @@ class GraphCanvas(QGraphicsView):
                         parent_vec[2] * 0.70 + local_dir[2] * 0.30,
                     )
                 )
-                parent_distance = math.sqrt(px * px + py * py + pz * pz)
-                # Distance from the center is parent distance plus a similarity-based
-                # offset. More similar second-hop nodes stay closer to their parent.
-                distance = parent_distance + 48.0 + (1.0 - child_relative_score) * 355.0
-                size = 6.5 + child_relative_score * 12.0
+                min_offset = parent_radius + child_radius + min_gap
+                similarity_offset = 48.0 + (1.0 - child_relative_score) * 355.0
+                distance = parent_distance + max(min_offset, similarity_offset)
                 layout[child_id] = (
                     mixed[0] * distance,
                     mixed[1] * distance,
                     mixed[2] * distance,
-                    size,
+                    child_radius,
                     "second",
                     child_raw_score_norm,
                 )
@@ -263,14 +260,11 @@ class GraphCanvas(QGraphicsView):
         cx = width / 2
         cy = height / 2
         projected: dict[str, tuple[float, float, float, float, str, float]] = {}
-
         for node_id, (x, y, z, size, layer, score) in self._layout3d.items():
             rx, ry, rz = _rotate3((x, y, z), self.yaw, self.pitch)
             perspective = 900.0 / max(260.0, 900.0 - rz)
             scale = self.zoom * perspective
-            sx = cx + rx * scale
-            sy = cy + ry * scale
-            projected[node_id] = (sx, sy, rz, max(4.0, size * scale), layer, score)
+            projected[node_id] = (cx + rx * scale, cy + ry * scale, rz, max(4.0, size * scale), layer, score)
 
         center_label = self.node_by_id.get(self.focus_id).term if self.focus_id in self.node_by_id else ""
         self._draw_title(center_label)
@@ -389,12 +383,6 @@ def _clamp_score(score: float) -> float:
 
 
 def _relative_scores(scores: list[float]) -> list[float]:
-    """Normalize a local neighborhood's scores so visual distances spread out.
-
-    Raw graph scores often occupy a narrow range. This maps the best score in the
-    current neighborhood to 1.0 and the weakest to 0.0, preserving ordering while
-    making distance differences visible.
-    """
     if not scores:
         return []
     clamped = [_clamp_score(score) for score in scores]
@@ -406,7 +394,6 @@ def _relative_scores(scores: list[float]) -> list[float]:
 
 
 def _depth_frontness(z: float) -> float:
-    """0 = far/back, 1 = close/front."""
     return max(0.0, min(1.0, (z + 420.0) / 840.0))
 
 
@@ -653,9 +640,10 @@ def _render_focus_panel(deck_name: str, manager: LocalGraphManager, graph_type: 
         f"<p><b>Meaning:</b> {html.escape(node.meaning)}</p>",
         f"<p><b>Example:</b> {html.escape(node.example)}</p>",
         f"<p>Nodes: <b>{len(manager.nodes)}</b>; Edges: <b>{len(manager.graphs.get(graph_type, []))}</b></p>",
+        "<p><b>Distance rule:</b> among the visible neighbors, higher relative similarity is placed closer, with a minimum clearance between linked nodes.</p>",
         "<h3>Nearest neighbors</h3>",
         "<table border='1' cellspacing='0' cellpadding='6'>",
-        "<tr><th>Neighbor</th><th>Score</th><th>Meaning</th></tr>",
+        "<tr><th>Neighbor</th><th>Raw score</th><th>Meaning</th></tr>",
     ]
     for neighbor_id, score in neighbors:
         neighbor = node_by_id.get(neighbor_id)
