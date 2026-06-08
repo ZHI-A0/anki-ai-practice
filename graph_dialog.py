@@ -72,9 +72,9 @@ class GraphCanvas(QGraphicsView):
     """Pseudo-3D center-focused graph canvas.
 
     - Click node: make it the center.
-    - Drag background: rotate the graph.
+    - Drag blank area/lines: rotate the graph.
     - Mouse wheel: zoom.
-    - Similarity controls distance and node size.
+    - Relative similarity controls distance and node size.
     """
 
     def __init__(self, parent: Any = None) -> None:
@@ -182,30 +182,34 @@ class GraphCanvas(QGraphicsView):
         self, center_id: str
     ) -> tuple[dict[str, tuple[float, float, float, float, str, float]], list[VisibleEdge]]:
         layout: dict[str, tuple[float, float, float, float, str, float]] = {
-            center_id: (0.0, 0.0, 0.0, 36.0, "center", 1.0)
+            center_id: (0.0, 0.0, 0.0, 38.0, "center", 1.0)
         }
         visible_edges: list[VisibleEdge] = []
-        first_neighbors = self.adjacency.get(center_id, [])[:22]
+        first_neighbors = [item for item in self.adjacency.get(center_id, [])[:22] if item[0] in self.node_by_id]
+        first_relative_scores = _relative_scores([score for _, score in first_neighbors])
         seen = {center_id}
 
         first_dirs = _fibonacci_sphere(len(first_neighbors), phase=0.31)
-        for index, (node_id, score) in enumerate(first_neighbors):
-            if node_id not in self.node_by_id or node_id in seen:
+        for index, (node_id, raw_score) in enumerate(first_neighbors):
+            if node_id in seen:
                 continue
             seen.add(node_id)
             direction = first_dirs[index]
-            score_norm = _clamp_score(score)
-            distance = 115.0 + (1.0 - score_norm) * 310.0
-            size = 14.0 + score_norm * 18.0
+            relative_score = first_relative_scores[index]
+            raw_score_norm = _clamp_score(raw_score)
+            # Relative similarity drives distance. This makes local differences
+            # visually obvious even if raw graph scores are tightly clustered.
+            distance = 72.0 + (1.0 - relative_score) * 455.0
+            size = 13.0 + relative_score * 24.0
             layout[node_id] = (
                 direction[0] * distance,
                 direction[1] * distance,
                 direction[2] * distance,
                 size,
                 "first",
-                score_norm,
+                raw_score_norm,
             )
-            visible_edges.append((center_id, node_id, score_norm))
+            visible_edges.append((center_id, node_id, raw_score_norm))
 
         second_budget = 58
         second_count = 0
@@ -214,13 +218,15 @@ class GraphCanvas(QGraphicsView):
                 continue
             px, py, pz, _, _, _ = layout[parent_id]
             parent_vec = _normalize3((px, py, pz))
-            candidates = self.adjacency.get(parent_id, [])[:8]
+            candidates = [item for item in self.adjacency.get(parent_id, [])[:8] if item[0] in self.node_by_id]
+            candidate_relative_scores = _relative_scores([score for _, score in candidates])
             local_dirs = _fibonacci_sphere(len(candidates), phase=0.17 + parent_index * 0.07)
-            for candidate_index, (child_id, child_score) in enumerate(candidates):
-                if child_id not in self.node_by_id or child_id in seen:
+            for candidate_index, (child_id, child_raw_score) in enumerate(candidates):
+                if child_id in seen:
                     continue
                 seen.add(child_id)
-                child_score_norm = _clamp_score(child_score)
+                child_relative_score = candidate_relative_scores[candidate_index]
+                child_raw_score_norm = _clamp_score(child_raw_score)
                 local_dir = local_dirs[candidate_index]
                 mixed = _normalize3(
                     (
@@ -230,17 +236,19 @@ class GraphCanvas(QGraphicsView):
                     )
                 )
                 parent_distance = math.sqrt(px * px + py * py + pz * pz)
-                distance = parent_distance + 95.0 + (1.0 - child_score_norm) * 260.0
-                size = 7.0 + child_score_norm * 9.0
+                # Distance from the center is parent distance plus a similarity-based
+                # offset. More similar second-hop nodes stay closer to their parent.
+                distance = parent_distance + 48.0 + (1.0 - child_relative_score) * 355.0
+                size = 6.5 + child_relative_score * 12.0
                 layout[child_id] = (
                     mixed[0] * distance,
                     mixed[1] * distance,
                     mixed[2] * distance,
                     size,
                     "second",
-                    child_score_norm,
+                    child_raw_score_norm,
                 )
-                visible_edges.append((parent_id, child_id, child_score_norm))
+                visible_edges.append((parent_id, child_id, child_raw_score_norm))
                 second_count += 1
                 if second_count >= second_budget:
                     return layout, visible_edges
@@ -380,13 +388,29 @@ def _clamp_score(score: float) -> float:
     return max(0.0, min(1.0, float(score or 0.0)))
 
 
+def _relative_scores(scores: list[float]) -> list[float]:
+    """Normalize a local neighborhood's scores so visual distances spread out.
+
+    Raw graph scores often occupy a narrow range. This maps the best score in the
+    current neighborhood to 1.0 and the weakest to 0.0, preserving ordering while
+    making distance differences visible.
+    """
+    if not scores:
+        return []
+    clamped = [_clamp_score(score) for score in scores]
+    min_score = min(clamped)
+    max_score = max(clamped)
+    if max_score - min_score <= 1e-9:
+        return [1.0 for _ in clamped]
+    return [(score - min_score) / (max_score - min_score) for score in clamped]
+
+
 def _depth_frontness(z: float) -> float:
     """0 = far/back, 1 = close/front."""
     return max(0.0, min(1.0, (z + 420.0) / 840.0))
 
 
 def _alpha_for_depth(z: float, base: int, fade: int) -> int:
-    # Closer-to-camera nodes are more transparent so they do not hide the center.
     return max(85, min(255, int(base - fade * _depth_frontness(z))))
 
 
@@ -408,7 +432,6 @@ def _build_undirected_adjacency(edges: list[GraphEdge]) -> dict[str, list[tuple[
 
 
 def _brush_for_layer(layer: str, z: float = 0.0) -> QBrush:
-    # Distinct layers + depth alpha. Foreground nodes become more transparent.
     if layer == "center":
         return QBrush(QColor(255, 150, 35, 255))
     alpha = _alpha_for_depth(z, base=235, fade=105)
