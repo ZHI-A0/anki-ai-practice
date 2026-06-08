@@ -11,7 +11,7 @@ Return valid JSON only. Do not wrap it in Markdown.
 Schema:
 {
   "title": "string",
-  "question_type": "cloze | qa",
+  "question_type": "multiple_choice | qa",
   "questions": [
     {
       "question": "string",
@@ -21,7 +21,22 @@ Schema:
     }
   ]
 }
+Rules:
+- For multiple_choice, every question must have 4 options.
+- The answer must exactly match one option.
+- Do not include option letters in the option strings.
 """.strip()
+
+
+def _language_instruction(language: str) -> str:
+    normalized = (language or "auto").strip().lower()
+    if normalized in {"auto", "source", "same", "same_as_source"}:
+        return (
+            "Write the question stem and options in the same language as the source learning items. "
+            "Use the user's preferred explanation language only for explanations if needed. "
+            "For example, if the source items are English words, generate English question stems and English options."
+        )
+    return f"Respond in {language}."
 
 
 def build_prompt(
@@ -40,17 +55,19 @@ def build_prompt(
         )
     else:
         task = (
-            "Generate one cloze passage or cloze-style practice set from the user's Anki notes. "
-            "If the notes are vocabulary cards, create a natural passage and blank out key words. "
-            "Include plausible options when useful. If the notes are not vocabulary, create fill-in-the-blank questions."
+            "Generate a set of multiple-choice temporary practice cards from the user's Anki notes. "
+            "Use cloze/fill-in-the-blank style when appropriate. "
+            "Each question should test one selected learning item. "
+            "Each question must have exactly 4 plausible options, with one correct answer. "
+            "Question stems and options should follow the source item's language; explanations may be concise."
         )
 
     system = (
-        "You are an assistant that creates high-quality learning practice for Anki users. "
+        "You are an assistant that creates high-quality Anki practice cards. "
         "Use only the compact source notes provided by the user. "
         "Ignore note IDs, metadata, HTML artifacts, audio markers, and unrelated dictionary noise if present. "
         "Make the practice useful for memory consolidation, not trivia. "
-        f"Respond in {language}. "
+        f"{_language_instruction(language)} "
         + SCHEMA_INSTRUCTIONS
     )
 
