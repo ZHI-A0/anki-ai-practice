@@ -22,8 +22,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "local_example_fields": "英语例句,Example,Examples,Sentence,例句",
     "local_target_fields": "英语单词,Front,正面,Expression,Term,单词,词条",
     "local_meaning_fields": "中文释义,Meaning,Back,背面,释义,答案",
+    "local_translation_example_fields": "中文例句,Translation Example,Example Translation,译文,中文翻译",
     "local_graph_fields": "英语单词,Front,正面,Expression,Term,单词,词条",
-    "local_explanation_source": "meaning_field",
+    "local_explanation_source": "meaning_and_translation_example",
     "use_existing_examples": True,
 
     # LLM settings.
