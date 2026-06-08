@@ -5,5 +5,32 @@
   "language": "zh-CN",
   "default_question_type": "cloze",
   "max_notes": 30,
-  "temperature": 0.7
+  "temperature": 0.7,
+  "preferred_fields": [
+    "英语单词",
+    "中文释义",
+    "英语例句",
+    "中文例句",
+    "Front",
+    "Back",
+    "正面",
+    "背面",
+    "Expression",
+    "Meaning",
+    "Sentence"
+  ],
+  "ignored_field_keywords": [
+    "发音",
+    "音频",
+    "sound",
+    "柯林斯",
+    "collins",
+    "vocabulary扩展",
+    "扩展",
+    "图片",
+    "image",
+    "html"
+  ],
+  "max_field_chars": 280,
+  "max_total_chars": 12000
 }
