@@ -4,15 +4,74 @@ from typing import Any
 
 from aqt import mw as main_window
 
+ADDON_PACKAGE = __name__.split(".")[0]
+
 DEFAULT_CONFIG: dict[str, Any] = {
+    # local_first: use existing note fields/examples + source graph first.
+    # llm_first: let the LLM generate question stems/explanations, while the
+    # plugin can still constrain options to the source graph.
+    "generation_mode": "local_first",
+    "question_type": "multiple_choice",
+    "question_language": "source",
+    "explanation_language": "zh-CN",
+    "max_notes": 30,
+    "save_deck_name": "AI Practice::Generated",
+
+    # Local-first settings.
+    "local_example_source": "example_field",
+    "local_example_fields": "英语例句,Example,Examples,Sentence,例句",
+    "local_target_fields": "英语单词,Front,正面,Expression,Term,单词,词条",
+    "local_meaning_fields": "中文释义,Meaning,Back,背面,释义,答案",
+    "local_graph_fields": "英语单词,Front,正面,Expression,Term,单词,词条",
+    "local_explanation_source": "meaning_field",
+    "use_existing_examples": True,
+
+    # LLM settings.
     "base_url": "https://api.openai.com/v1",
     "api_key": "",
     "model": "gpt-4o-mini",
-    "language": "zh-CN",
-    "default_question_type": "cloze",
-    "max_notes": 30,
     "temperature": 0.7,
+    "llm_source_fields": "Front,正面,Question,问题,英语单词,中文释义,英语例句,中文例句,Back,背面",
+    "llm_graph_fields": "英语单词,Front,正面,Expression,Term,单词,词条",
+
+    # Shared source compression settings.
+    "source_mode": "front",
+    "preferred_fields": [
+        "英语单词",
+        "中文释义",
+        "英语例句",
+        "中文例句",
+        "Front",
+        "Back",
+        "正面",
+        "背面",
+        "Expression",
+        "Meaning",
+        "Sentence",
+    ],
+    "ignored_field_keywords": [
+        "发音",
+        "音频",
+        "sound",
+        "柯林斯",
+        "collins",
+        "vocabulary扩展",
+        "扩展",
+        "图片",
+        "image",
+        "html",
+        "css",
+        "style",
+    ],
+    "max_field_chars": 280,
+    "max_total_chars": 12000,
 }
+
+
+def split_fields(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [part.strip() for part in str(value or "").split(",") if part.strip()]
 
 
 def _main_window(window: Any) -> Any:
@@ -31,9 +90,16 @@ def get_config(window: Any = None) -> dict[str, Any]:
     mw = _main_window(window)
     addon_manager = getattr(mw, "addonManager", None)
     if addon_manager is not None:
-        saved = addon_manager.getConfig(__name__.split(".")[0]) or {}
+        saved = addon_manager.getConfig(ADDON_PACKAGE) or {}
         config.update(saved)
     return config
+
+
+def save_config(window: Any, config: dict[str, Any]) -> None:
+    mw = _main_window(window)
+    addon_manager = getattr(mw, "addonManager", None)
+    if addon_manager is not None:
+        addon_manager.writeConfig(ADDON_PACKAGE, config)
 
 
 def get_config_summary(window: Any = None) -> str:
@@ -41,10 +107,13 @@ def get_config_summary(window: Any = None) -> str:
     api_key = "configured" if config.get("api_key") else "missing"
     return "\n".join(
         [
+            f"generation_mode: {config.get('generation_mode')}",
+            f"question_type: {config.get('question_type')}",
+            f"question_language: {config.get('question_language')}",
+            f"explanation_language: {config.get('explanation_language')}",
+            f"local_example_source: {config.get('local_example_source')}",
             f"base_url: {config.get('base_url')}",
             f"model: {config.get('model')}",
-            f"language: {config.get('language')}",
-            f"default_question_type: {config.get('default_question_type')}",
             f"max_notes: {config.get('max_notes')}",
             f"api_key: {api_key}",
         ]
