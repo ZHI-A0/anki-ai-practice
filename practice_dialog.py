@@ -4,6 +4,7 @@ import html
 import json
 from typing import Any
 
+from aqt.operations import QueryOp
 from aqt.qt import (
     QComboBox,
     QDialog,
@@ -19,7 +20,7 @@ from aqt.utils import showInfo, showWarning
 
 from .card_creator import save_practice_as_cards
 from .config import get_config
-from .llm_client import LLMError, chat_completion
+from .llm_client import chat_completion
 from .models import SourceNote
 from .prompt_builder import build_prompt
 from .source_compactor import clean_field_text, compact_notes_for_llm
@@ -44,30 +45,42 @@ def _render_notes_preview(notes: list[SourceNote]) -> str:
 def _render_practice_cards(result: dict[str, Any]) -> str:
     title = html.escape(str(result.get("title") or "AI Practice"))
     questions = result.get("questions") or []
-    body = [f"<h2>{title}</h2>"]
+    body = [
+        "<style>"
+        ".practice-card{border:1px solid #e5e5e5;border-radius:14px;padding:14px;margin:14px 0;background:#fff;}"
+        ".practice-question{font-size:16px;font-weight:600;margin-bottom:12px;}"
+        ".practice-options{display:grid;grid-template-columns:1fr 1fr;gap:8px;}"
+        ".practice-option{border:1px solid #ddd;border-radius:10px;padding:8px 10px;background:#fafafa;}"
+        ".practice-badge{display:inline-block;width:24px;height:24px;line-height:24px;text-align:center;border-radius:50%;border:1px solid #aaa;margin-right:8px;font-weight:bold;}"
+        ".practice-answer{margin-top:12px;padding:10px;border-radius:10px;background:#f6f6f6;}"
+        "</style>"
+        f"<h2>{title}</h2>"
+    ]
 
     for index, item in enumerate(questions, start=1):
         question = html.escape(str(item.get("question") or ""))
         answer = html.escape(str(item.get("answer") or ""))
         explanation = html.escape(str(item.get("explanation") or ""))
-        options = item.get("options") or []
+        options = list(item.get("options") or [])[:4]
+        labels = ["A", "B", "C", "D"]
 
-        body.append(
-            "<div style='border:1px solid #ddd;border-radius:8px;"
-            "padding:12px;margin:12px 0;background:#fff;'>"
-        )
+        body.append("<div class='practice-card'>")
         body.append(f"<h3>Question {index}</h3>")
-        body.append(f"<p style='font-size:16px;'>{question.replace(chr(10), '<br>')}</p>")
+        body.append(f"<div class='practice-question'>{question.replace(chr(10), '<br>')}</div>")
         if options:
-            body.append("<ol type='A'>")
-            for option in options:
-                body.append(f"<li>{html.escape(str(option))}</li>")
-            body.append("</ol>")
-        body.append("<details><summary>Show answer and explanation</summary>")
-        body.append(f"<p><b>Answer:</b> {answer}</p>")
+            body.append("<div class='practice-options'>")
+            for label, option in zip(labels, options):
+                body.append(
+                    "<div class='practice-option'>"
+                    f"<span class='practice-badge'>{label}</span>{html.escape(str(option))}"
+                    "</div>"
+                )
+            body.append("</div>")
+        body.append("<div class='practice-answer'>")
+        body.append(f"<b>Answer:</b> {answer}<br>")
         if explanation:
-            body.append(f"<p><b>Explanation:</b> {explanation.replace(chr(10), '<br>')}</p>")
-        body.append("</details>")
+            body.append(f"<b>Explanation:</b> {explanation.replace(chr(10), '<br>')}")
+        body.append("</div>")
         body.append("</div>")
 
     if not questions:
@@ -124,7 +137,7 @@ class PracticeDialog(QDialog):
             "<h2>Temporary Practice Cards</h2>"
             "<p>Click <b>Generate Temporary Cards</b> to create a temporary practice set. "
             "Your selection preview will remain visible on the left.</p>"
-            "<p>After generation, click <b>Save as Anki Cards</b> to create real cards in "
+            "<p>After generation, click <b>Save as Anki Cards</b> to create interactive choice cards in "
             "<b>AI Practice::Generated</b>.</p>"
         )
 
@@ -141,7 +154,7 @@ class PracticeDialog(QDialog):
     def _generate(self) -> None:
         config = get_config(self.mw)
         question_type = str(self.question_type.currentData())
-        language = str(config.get("language") or "zh-CN")
+        language = str(config.get("language") or "auto")
         compact_source = compact_notes_for_llm(self.notes, config)
         messages = build_prompt(self.notes, question_type, language, config)
 
@@ -150,24 +163,33 @@ class PracticeDialog(QDialog):
         self.generate_button.setEnabled(False)
         self.practice_view.setHtml(
             "<h2>Generating...</h2>"
-            "<p>Contacting the configured LLM API. Anki may appear busy until the request finishes.</p>"
+            "<p>The request is running in the background. You can keep Anki open while it completes.</p>"
             f"<p>Compressed source length: {len(compact_source)} characters.</p>"
         )
-        try:
-            result = chat_completion(config, messages)
-        except LLMError as exc:
+
+        def run_in_background(_: Any) -> dict[str, Any]:
+            return chat_completion(config, messages)
+
+        def on_success(result: dict[str, Any]) -> None:
+            self.generated_result = result
+            self.generate_button.setEnabled(True)
+            self.save_button.setEnabled(True)
+            self.practice_view.setHtml(_render_practice_cards(result))
+
+        def on_failure(exc: Exception) -> None:
+            self.generate_button.setEnabled(True)
+            self.save_button.setEnabled(False)
             showWarning(str(exc))
             self.practice_view.setHtml(
                 "<h2>Generation failed</h2>"
                 f"<pre>{html.escape(str(exc))}</pre>"
             )
-            return
-        finally:
-            self.generate_button.setEnabled(True)
 
-        self.generated_result = result
-        self.save_button.setEnabled(True)
-        self.practice_view.setHtml(_render_practice_cards(result))
+        QueryOp(
+            parent=self,
+            op=run_in_background,
+            success=on_success,
+        ).failure(on_failure).without_collection().run_in_background()
 
     def _save_as_cards(self) -> None:
         if not self.generated_result:
